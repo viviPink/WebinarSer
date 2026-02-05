@@ -60,12 +60,21 @@ const upload = multer({
 app.use(cors({
   origin: true,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Content-Disposition']
 }));
 
 app.use(express.json());
 app.use(express.static('public'));
+
+// Логирование запросов
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
+  if (req.method === 'POST' || req.method === 'PUT') {
+    console.log('Body:', JSON.stringify(req.body, null, 2));
+  }
+  next();
+});
 
 // Разрешаем доступ к папке с аудио файлами
 app.use('/uploads/audio', express.static(audioDir));
@@ -100,7 +109,20 @@ pool.on('error', (err) => console.error('Ошибка PostgreSQL:', err));
 const createAudioRecordingsTable = async () => {
   try {
     await pool.query(`
-      
+      CREATE TABLE IF NOT EXISTS "AudioRecording" (
+        id SERIAL PRIMARY KEY,
+        "sessionId" INTEGER,
+        "teacherId" INTEGER,
+        "fileName" VARCHAR(255) NOT NULL,
+        "filePath" VARCHAR(500) NOT NULL,
+        "fileSize" INTEGER,
+        "duration" INTEGER,
+        "title" VARCHAR(255),
+        "description" TEXT,
+        "transcription" TEXT,
+        "lastEditedAt" TIMESTAMP,
+        "createdAt" TIMESTAMP DEFAULT NOW()
+      )
     `);
     console.log('Таблица AudioRecording создана/проверена');
   } catch (err) {
@@ -112,7 +134,9 @@ const createAudioRecordingsTable = async () => {
 const addTranscriptionColumns = async () => {
   try {
     await pool.query(`
- 
+      ALTER TABLE "AudioRecording" 
+      ADD COLUMN IF NOT EXISTS "transcription" TEXT,
+      ADD COLUMN IF NOT EXISTS "lastEditedAt" TIMESTAMP;
     `);
     console.log('Таблица AudioRecording проверена/обновлена для транскрипций');
   } catch (err) {
@@ -529,7 +553,8 @@ app.post('/api/audio/:recordingId/transcribe', async (req, res) => {
       // 5. Сохраняем транскрипцию в БД
       await pool.query(
         `UPDATE "AudioRecording" 
-         SET "transcription" = $1
+         SET "transcription" = $1,
+             "lastEditedAt" = NOW()
          WHERE id = $2`,
         [transcriptionText, recordingId]
       );
@@ -559,6 +584,141 @@ app.post('/api/audio/:recordingId/transcribe', async (req, res) => {
 });
 
 
+// ======================
+// API ДЛЯ РЕДАКТИРОВАНИЯ ТРАНСКРИПЦИЙ
+// ======================
+
+// Получить транскрипцию для редактирования
+app.get('/api/audio/:recordingId/transcription/edit', async (req, res) => {
+  try {
+    const { recordingId } = req.params;
+    console.log(`Запрос транскрипции для редактирования ID: ${recordingId}`);
+    
+    const result = await pool.query(
+      `SELECT ar.id, ar."transcription", ar.title, ar.description, 
+              ar."createdAt", ar.duration, ar."fileSize", ar."filePath",
+              t.name as "teacherName"
+       FROM "AudioRecording" ar
+       LEFT JOIN "Teacher" t ON ar."teacherId" = t.id
+       WHERE ar.id = $1`,
+      [recordingId]
+    );
+    
+    if (result.rows.length === 0) {
+      console.log(`Запись ID ${recordingId} не найдена`);
+      return res.status(404).json({ 
+        success: false,
+        error: 'Запись не найдена' 
+      });
+    }
+    
+    const recording = result.rows[0];
+    console.log(`Транскрипция найдена, длина: ${(recording.transcription || '').length} символов`);
+    
+    res.json({
+      id: recording.id,
+      transcription: recording.transcription || '',
+      title: recording.title || 'Без названия',
+      description: recording.description || '',
+      createdAt: recording.createdAt,
+      duration: recording.duration,
+      fileSize: recording.fileSize,
+      filePath: recording.filePath,
+      teacherName: recording.teacherName
+    });
+  } catch (err) {
+    console.error('Ошибка получения транскрипции:', err);
+    res.status(500).json({ 
+      success: false,
+      error: 'Ошибка сервера при получении транскрипции',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+
+// Сохранить отредактированную транскрипцию
+app.put('/api/audio/:recordingId/transcription/edit', async (req, res) => {
+  const { recordingId } = req.params;
+  const { transcription } = req.body;
+  
+  console.log(`Сохранение транскрипции для записи ID: ${recordingId}`);
+  console.log(`Длина транскрипции: ${(transcription || '').length} символов`);
+  
+  if (transcription === undefined || transcription === null) {
+    return res.status(400).json({ 
+      success: false,
+      error: 'Текст транскрипции обязателен' 
+    });
+  }
+  
+  try {
+    // Проверяем существование записи
+    const checkResult = await pool.query(
+      'SELECT id FROM "AudioRecording" WHERE id = $1',
+      [recordingId]
+    );
+    
+    if (checkResult.rows.length === 0) {
+      console.log(`Запись ID ${recordingId} не найдена при сохранении`);
+      return res.status(404).json({ 
+        success: false,
+        error: 'Запись не найдена' 
+      });
+    }
+    
+    // Обновляем транскрипцию
+    const updateResult = await pool.query(
+      `UPDATE "AudioRecording" 
+       SET "transcription" = $1,
+           "lastEditedAt" = NOW()
+       WHERE id = $2 
+       RETURNING id, "transcription", "lastEditedAt"`,
+      [transcription, recordingId]
+    );
+    
+    console.log(`Транскрипция успешно сохранена для записи ID: ${recordingId}`);
+    
+    res.json({
+      success: true,
+      recording: updateResult.rows[0],
+      message: 'Транскрипция успешно сохранена'
+    });
+  } catch (err) {
+    console.error('Ошибка сохранения транскрипции:', err);
+    res.status(500).json({ 
+      success: false,
+      error: 'Ошибка сервера при сохранении транскрипции',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+
+// Тестовый эндпоинт для отладки
+app.get('/api/debug/audio/:id', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM "AudioRecording" WHERE id = $1', [req.params.id]);
+    res.json({
+      exists: result.rows.length > 0,
+      data: result.rows[0]
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/test/transcription', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, title FROM "AudioRecording" LIMIT 5');
+    res.json({
+      success: true,
+      recordings: result.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // WEBSOCKET ЛОГИКА
 
 
@@ -582,7 +742,7 @@ io.on('connection', (socket) => {
     const teacherInfo = activeConnections.get(socket.id);
     
     if (!teacherInfo || teacherInfo.userType !== 'teacher') {
-      socket.emit('error', { message: 'То' });
+      socket.emit('error', { message: 'Только преподаватель может начать трансляцию' });
       return;
     }
 
@@ -616,7 +776,7 @@ io.on('connection', (socket) => {
   socket.on('teacher_request_student_screen', ({ sessionId, studentSocketId }) => {
     const teacherInfo = activeConnections.get(socket.id);
     if (!teacherInfo || teacherInfo.userType !== 'teacher') {
-      socket.emit('error', { message: 'То' });
+      socket.emit('error', { message: 'Только преподаватель может запросить экран студента' });
       return;
     }
 
