@@ -22,21 +22,21 @@ pip install flask flask-cors openai-whisper torch
 PORT=3001
 NODE_ENV=development
 
-# База данных PostgreSQL
+База данных PostgreSQL
 DB_USER=postgres
 DB_PASSWORD=your_password
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=webinar_platform
 
-# Whisper сервис
+Whisper сервис
 WHISPER_SERVICE_URL=http://localhost:5000
 
-# React 
+React 
 REACT_APP_API_URL=http://localhost:3001
 REACT_APP_SOCKET_URL=http://localhost:3001
 
-Запуск
+# Запуск
 1. Запустите Whisper сервис
 python whisper_service.py
 2. Запустите основной сервер
