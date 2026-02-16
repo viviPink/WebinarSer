@@ -1,24 +1,63 @@
-const express = require('express');
-const cors = require('cors');
-const { Pool } = require('pg');
-const http = require('http');
-const socketIo = require('socket.io');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');
-require('dotenv').config();
+/**
+ Основной функционал сейчас:
+ Аутентификация преподавателей и студентов 
+ Управление курсами и сессиями 
+  Чат WebSocket
+ Запись и хранение аудио с вебинаров
+ Транскрибация аудио через Whisper API
+ Демонстрация экрана через WebRTC P2P
+ Отслеживание посещаемости
+  
+  
+  
+  Middleware
+   это программное обеспечение, которое действует как связующее звено между различными приложениями, системами или компонентами.
+ */
 
-// === ИМПОРТЫ ДЛЯ WHISPER ===
-const axios = require('axios');
-const FormData = require('form-data');
+// Импорт зависимостей
+const express = require('express');         // Веб-фреймворк для создания API
+const cors = require('cors');               // Middleware для CORS (междоменные запросы)
+const { Pool } = require('pg');              // Клиент PostgreSQL для работы с БД
+const https = require('https');              // HTTPS сервер
+const fs = require('fs');                    // Работа с файловой системой
+const path = require('path');                // Работа с путями файлов
+const socketIo = require('socket.io');        // WebSocket для реального времени
+const multer = require('multer');            // Middleware для загрузки файлов
+const { v4: uuidv4 } = require('uuid');      // Генерация уникальных ID
+require('dotenv').config();                   // Загрузка переменных окружения из .env
+const axios = require('axios');               // HTTP клиент для запросов к Whisper API
+const FormData = require('form-data');        // Формирование multipart/form-data для загрузки файлов
 
-const app = express();
-const server = http.createServer(app);
+// Настройка сертификатов
+// Пути к SSL сертификатам (см. .env)
+const certPath = process.env.CERT_PATH || './certs/certificate.crt';
+const keyPath = process.env.KEY_PATH || './certs/private.key';
 
-// Создаем папки для загрузок если их нет
-const uploadsDir = path.join(__dirname, 'uploads');
-const audioDir = path.join(uploadsDir, 'audio');
+// Проверяем наличие сертификатов перед запуском сервера
+if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+  console.error('Сертификаты не найдены');
+  process.exit(1); // Завершаем процесс с ошибкой
+}
+
+// Читаем файлы сертификатов
+const privateKey = fs.readFileSync(keyPath, 'utf8');
+const certificate = fs.readFileSync(certPath, 'utf8');
+
+// Формируем объект credentials-"удостоверение личности" для HTTPS сервера
+const credentials = {
+  key: privateKey,
+  cert: certificate
+};
+
+// инициализация самого приложения
+const app = express();                       // Создаем Express приложение
+const server = https.createServer(credentials, app); // Создаем HTTPS сервер
+
+// директория для файлов
+const uploadsDir = path.join(__dirname, 'uploads');     // Основная папка загрузок
+const audioDir = path.join(uploadsDir, 'audio');        // Папка для аудиофайлов
+
+// Создаем директории, если они не существуют 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -26,65 +65,100 @@ if (!fs.existsSync(audioDir)) {
   fs.mkdirSync(audioDir, { recursive: true });
 }
 
-// Настройка multer для загрузки аудиофайлов
+// настройка multer - загрузка файлов 
+/**
+ Конфигурация хранилища для multer
+ Определяет куда и как сохранять загружаемые файлы
+ */
 const storage = multer.diskStorage({
+  // Функция определения директории назначения
   destination: function (req, file, cb) {
-    cb(null, audioDir);
+    cb(null, audioDir); // Сохраняем в папку audio
   },
+  // Функция генерации имени файла
   filename: function (req, file, cb) {
+    // Извлекаем данные из тела запроса для формирования имени
     const sessionId = req.body.sessionId || 'unknown';
     const teacherId = req.body.teacherId || 'unknown';
     const timestamp = Date.now();
-    const randomId = uuidv4().slice(0, 8);
+    const randomId = uuidv4().slice(0, 8); // Первые 8 символов UUID
+    // Формируем имя: recording_{sessionId}_{teacherId}_{timestamp}_{randomId}.webm
     const filename = `recording_${sessionId}_${teacherId}_${timestamp}_${randomId}.webm`;
     cb(null, filename);
   }
 });
 
-const upload = multer({ 
+/**
+ Конфигурация загрузчика multer
+  Ограничения: максимум 50MB, только аудио файлы
+ */
+const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB лимит
+    fileSize: 50 * 1024 * 1024, 
   },
+  // Фильтр для проверки типов файлов
   fileFilter: function (req, file, cb) {
+    // Разрешенные типы аудио
     const allowedMimes = ['audio/webm', 'audio/wav', 'audio/mp3', 'audio/ogg', 'audio/mpeg'];
     if (allowedMimes.includes(file.mimetype)) {
-      cb(null, true);
+      cb(null, true); // Принимаем файл
     } else {
-      cb(new Error('Только аудио файлы разрешены (webm, wav, mp3, ogg)'));
+      cb(new Error('что-то не так с форматом файла')); // Отклоняем
     }
   }
 });
 
-// CORS настройки — ДОЛЖНЫ БЫТЬ ПЕРВЫМИ
+// MIDDLEWARE (ПРОМЕЖУТОЧНОЕ ПО) 
+/**
+ Настройка CORS (Cross-Origin Resource Sharing)
+  Разрешает запросы с любых источников, поддерживает куки/учетные данные
+ */
 app.use(cors({
-  origin: true,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Content-Disposition']
+  origin: true,              // Разрешить все источники
+  credentials: true,         // Разрешить отправку куки и заголовков авторизации
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'], // Разрешенные HTTP методы
+  allowedHeaders: ['Content-Type', 'Authorization', 'Content-Disposition'] // Разрешенные заголовки
 }));
 
-app.use(express.json());
-app.use(express.static('public'));
+app.use(express.json());      // Парсинг JSON тела запроса
+app.use(express.static('public')); // Раздача статических файлов из папки public
 
-// Разрешаем доступ к папке с аудио файлами
-app.use('/uploads/audio', express.static(audioDir));
-
-// Socket.io настройки
-const io = socketIo(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-    credentials: true
-  },
-  transports: ['websocket', 'polling'],
-  pingTimeout: 60000,
-  pingInterval: 25000
+/**
+ Логирующий middleware
+  Записывает все входящие запросы и их тела (для POST/PUT)
+ */
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
+  if (req.method === 'POST' || req.method === 'PUT') {
+    console.log('Body:', JSON.stringify(req.body, null, 2)); // Форматированный вывод тела
+  }
+  next(); // Передаем управление следующему middleware
 });
 
-const PORT = process.env.PORT || 3001;
+// Раздача статических файлов из папки uploads/audio по URL /uploads/audio
+app.use('/uploads/audio', express.static(audioDir));
 
-// Подключение к PostgreSQL
+// настройка Websocet (socket.io)
+const io = socketIo(server, {
+  cors: {
+    origin: "*",              // Разрешить все источники
+    methods: ["GET", "POST"], // Разрешенные методы
+    credentials: true
+  },
+  transports: ['websocket', 'polling'], // Поддерживаемые транспорты (WebSocket и long-polling)
+  pingTimeout: 60000,         // Таймаут пинга (60 сек)
+  pingInterval: 25000         // Интервал пинга (25 сек)
+});
+
+// порт сервера
+const PORT = process.env.PORT || 3001; // Порт из .env или 3001 
+
+
+/**
+  соединений с PostgreSQL
+  настройки берутся из переменных окружения
+ */
 const pool = new Pool({
   user: process.env.DB_USER,
   host: process.env.DB_HOST,
@@ -93,49 +167,77 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
+// Обработчики событий пула
 pool.on('connect', () => console.log('PostgreSQL подключен'));
 pool.on('error', (err) => console.error('Ошибка PostgreSQL:', err));
 
-// Создаем таблицу для аудиозаписей если её нет
-const createAudioRecordingsTable = async () => {
-  try {
-    await pool.query(`
-      
-    `);
-    console.log('Таблица AudioRecording создана/проверена');
-  } catch (err) {
-    console.error('Ошибка создания таблицы AudioRecording:', err);
-  }
-};
 
-// Добавляем колонки для транскрипции если их нет
-const addTranscriptionColumns = async () => {
-  try {
-    await pool.query(`
- 
-    `);
-    console.log('Таблица AudioRecording проверена/обновлена для транскрипций');
-  } catch (err) {
-    console.error('Ошибка при добавлении колонок транскрипции:', err);
-  }
-};
+/**
+ Создание таблицы AudioRecording, если она не существует
+  Хранит метаданные загруженных аудиозаписей
+ */
+// const createAudioRecordingsTable = async () => {
+//   try {
+//     await pool.query(`CREATE TABLE IF NOT EXISTS "AudioRecording" (
+//       id SERIAL PRIMARY KEY,                          // Уникальный ID записи
+//       "sessionId" INTEGER,                            // ID сессии (вебинара)
+//       "teacherId" INTEGER,                             // ID преподавателя
+//       "fileName" VARCHAR(255) NOT NULL,                // Имя файла на диске
+//       "filePath" VARCHAR(500) NOT NULL,                // Путь к файлу (URL)
+//       "fileSize" INTEGER,                               // Размер файла в байтах
+//       "duration" INTEGER,                               // Длительность в секундах
+//       "title" VARCHAR(255),                             // Название записи
+//       "description" TEXT,                               // Описание
+//       "transcription" TEXT,                             // Транскрипция текста
+//       "lastEditedAt" TIMESTAMP,                         // Время последнего редактирования
+//       "createdAt" TIMESTAMP DEFAULT NOW()               // Время создания
+//     )`);
+//     console.log('Таблица AudioRecording создана/проверена');
+//   } catch (err) {
+//     console.error('Ошибка создания таблицы AudioRecording:', err);
+//   }
+// };
 
-createAudioRecordingsTable();
-addTranscriptionColumns();
+/**
+ * Добавление колонок для транскрипции в существующую таблицу
+ */
+// const addTranscriptionColumns = async () => {
+//   try {
+//     await pool.query(`ALTER TABLE "AudioRecording" 
+//       ADD COLUMN IF NOT EXISTS "transcription" TEXT, 
+//       ADD COLUMN IF NOT EXISTS "lastEditedAt" TIMESTAMP;`);
+//     console.log('Таблица AudioRecording проверена/обновлена для транскрипций');
+//   } catch (err) {
+//     console.error('Ошибка при добавлении колонок транскрипции:', err);
+//   }
+// };
 
+// Выполняем инициализацию таблиц при старте
+//createAudioRecordingsTable();
+// addTranscriptionColumns();
 
-// API ЭНДПОИНТЫ
-
-
+// Обработка preflight запросов OPTIONS для CORS
 app.options('*', cors());
 
-// Вход преподавателя
+// API эндпоинты
+
+/**
+ аунтефикация преподавателя
+ POST /api/teacher/login
+ Вход или регистрация преподавателя 
+  Если преподаватель с таким email не найден - создает нового !!!!! надо исправить тут 
+  
+  Тело запроса: { name, email }
+  Ответ: объект Teacher
+ */
 app.post('/api/teacher/login', async (req, res) => {
   const { name, email } = req.body;
   try {
+    // Ищем преподавателя по email
     let result = await pool.query('SELECT * FROM "Teacher" WHERE email = $1', [email]);
     let teacher = result.rows[0];
-
+    
+    // Если не найден - создаем нового
     if (!teacher) {
       const insert = await pool.query(
         'INSERT INTO "Teacher" (name, email) VALUES ($1, $2) RETURNING *',
@@ -143,7 +245,6 @@ app.post('/api/teacher/login', async (req, res) => {
       );
       teacher = insert.rows[0];
     }
-
     res.json(teacher);
   } catch (err) {
     console.error('Ошибка:', err);
@@ -151,7 +252,13 @@ app.post('/api/teacher/login', async (req, res) => {
   }
 });
 
-// Курсы преподавателя
+/**
+  GET /api/teacher/:teacherId/courses
+  Возвращает все курсы, созданные преподавателем
+  
+  Параметры URL: teacherId
+  Ответ: массив объектов Course
+ */
 app.get('/api/teacher/:teacherId/courses', async (req, res) => {
   try {
     const result = await pool.query(
@@ -165,10 +272,16 @@ app.get('/api/teacher/:teacherId/courses', async (req, res) => {
   }
 });
 
-// Создать курс
+/**
+ создание нового курса
+  POST /api/teacher/courses/create
+  Создает новый курс для преподавателя
+  
+  Тело запроса: { teacherId, title }
+  созданный объект Course
+ */
 app.post('/api/teacher/courses/create', async (req, res) => {
   const { teacherId, title } = req.body;
-  
   try {
     const result = await pool.query(
       'INSERT INTO "Course" ("teacherId", title) VALUES ($1, $2) RETURNING *',
@@ -181,10 +294,16 @@ app.post('/api/teacher/courses/create', async (req, res) => {
   }
 });
 
-// Создать сессию вебинара
+/**
+ создание вебинара 
+  POST /api/teacher/sessions/create
+  Создает новую активную сессию для курса
+  
+  Тело запроса: { courseId }
+ созданный объект Session с isActive = true
+ */
 app.post('/api/teacher/sessions/create', async (req, res) => {
   const { courseId } = req.body;
-  
   try {
     const result = await pool.query(
       'INSERT INTO "Session" ("courseId", "isActive", "startTime") VALUES ($1, true, NOW()) RETURNING *',
@@ -197,7 +316,14 @@ app.post('/api/teacher/sessions/create', async (req, res) => {
   }
 });
 
-// Активные сессии преподавателя
+/**
+ Получение активных сессий преподавателя
+  GET /api/teacher/:teacherId/sessions/active
+  Возвращает все активные сессии преподавателя с названиями курсов
+  
+  Параметры URL: teacherId
+  массив объектов Session с полем courseTitle
+ */
 app.get('/api/teacher/:teacherId/sessions/active', async (req, res) => {
   try {
     const result = await pool.query(
@@ -214,7 +340,14 @@ app.get('/api/teacher/:teacherId/sessions/active', async (req, res) => {
   }
 });
 
-// Завершить сессию
+/**
+ Завершение сессии
+  POST /api/sessions/:sessionId/finish
+  Помечает сессию как неактивную и устанавливает время окончания
+  
+  Параметры URL: sessionId
+ обновленный объект Session
+ */
 app.post('/api/sessions/:sessionId/finish', async (req, res) => {
   try {
     const result = await pool.query(
@@ -228,16 +361,26 @@ app.post('/api/sessions/:sessionId/finish', async (req, res) => {
   }
 });
 
-// Вход студента
+/**
+  аутентификация студента
+  POST /api/student/login
+  Вход или регистрация студента по имени и группе
+  Если студент не найден - создает нового
+  
+  Тело запроса: { name, group }
+   объект Student
+ */
 app.post('/api/student/login', async (req, res) => {
   const { name, group } = req.body;
   try {
+    // Ищем студента по имени и группе
     let result = await pool.query(
       'SELECT * FROM "Student" WHERE "full_name" = $1 AND "group" = $2',
       [name, group]
     );
     let student = result.rows[0];
-
+    
+    // Если не найден - создаем нового
     if (!student) {
       const insert = await pool.query(
         'INSERT INTO "Student" ("full_name", "group") VALUES ($1, $2) RETURNING *',
@@ -245,7 +388,6 @@ app.post('/api/student/login', async (req, res) => {
       );
       student = insert.rows[0];
     }
-
     res.json(student);
   } catch (err) {
     console.error('Ошибка:', err);
@@ -253,14 +395,21 @@ app.post('/api/student/login', async (req, res) => {
   }
 });
 
-// Активные сессии для студентов
+/**
+ Получение всех активных сессий
+  GET /api/sessions/active
+  Возвращает все активные сессии с информацией о курсе и преподавателе
+  Используется студентами для просмотра доступных вебинаров
+  
+  Ответ: массив объектов Session с полями courseTitle и teacherName
+ */
 app.get('/api/sessions/active', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT s.*, c.title as "courseTitle", t.name as "teacherName"
+      `SELECT s.*, c.title as "courseTitle", t.name as "teacherName" 
        FROM "Session" s 
        JOIN "Course" c ON s."courseId" = c.id 
-       JOIN "Teacher" t ON c."teacherId" = t.id
+       JOIN "Teacher" t ON c."teacherId" = t.id 
        WHERE s."isActive" = true`
     );
     res.json(result.rows);
@@ -270,17 +419,26 @@ app.get('/api/sessions/active', async (req, res) => {
   }
 });
 
-// Присоединиться к сессии
+/**
+  Отметка о посещении студентом 
+  POST /api/attendance/join
+  Регистрирует присоединение студента к сессии
+  Если студента нет в БД - создает его   вот это было странно !!!!!!!!!!!!!!!!!!!!!!!
+  
+  Тело запроса: { studentName, groupName, sessionId }
+  Ответ: { success: true, attendance: объект Attendance }
+ */
 app.post('/api/attendance/join', async (req, res) => {
   const { studentName, groupName, sessionId } = req.body;
-
   try {
+    // Ищем студента по имени и группе
     let studentResult = await pool.query(
       'SELECT id FROM "Student" WHERE "full_name" = $1 AND "group" = $2',
       [studentName, groupName]
     );
-    
     let studentId;
+    
+    // Если студент не найден - создаем
     if (studentResult.rows.length === 0) {
       const newStudent = await pool.query(
         'INSERT INTO "Student" ("full_name", "group") VALUES ($1, $2) RETURNING id',
@@ -291,6 +449,7 @@ app.post('/api/attendance/join', async (req, res) => {
       studentId = studentResult.rows[0].id;
     }
 
+    // Создаем запись о посещении
     const attendance = await pool.query(
       'INSERT INTO "Attendance" ("studentId", "sessionId") VALUES ($1, $2) RETURNING *',
       [studentId, sessionId]
@@ -303,16 +462,23 @@ app.post('/api/attendance/join', async (req, res) => {
   }
 });
 
-// История студента
+/**
+ История посещений студента 
+  GET /api/student/:studentId/history
+  Возвращает все сессии, в которых участвовал студент
+  
+  Параметры URL: studentId
+  массив объектов Session 
+ */
 app.get('/api/student/:studentId/history', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT s.*, c.title as "courseTitle", t.name as "teacherName"
-       FROM "Attendance" a
-       JOIN "Session" s ON a."sessionId" = s.id
-       JOIN "Course" c ON s."courseId" = c.id
-       JOIN "Teacher" t ON c."teacherId" = t.id
-       WHERE a."studentId" = $1
+      `SELECT s.*, c.title as "courseTitle", t.name as "teacherName" 
+       FROM "Attendance" a 
+       JOIN "Session" s ON a."sessionId" = s.id 
+       JOIN "Course" c ON s."courseId" = c.id 
+       JOIN "Teacher" t ON c."teacherId" = t.id 
+       WHERE a."studentId" = $1 
        ORDER BY a."joinTime" DESC`,
       [req.params.studentId]
     );
@@ -323,25 +489,30 @@ app.get('/api/student/:studentId/history', async (req, res) => {
   }
 });
 
-// Получить историю чата для сессии
+/**
+  Получение сообщений сессии 
+  GET /api/messages/:sessionId
+ Возвращает все сообщения чата для указанной сессии
+  
+  Параметры URL: sessionId
+  Ответ: массив объектов Message с полем senderName
+ */
 app.get('/api/messages/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
-  
   try {
     const result = await pool.query(
       `SELECT m.*, 
         CASE 
-          WHEN m."senderType" = 'teacher' THEN t.name
-          WHEN m."senderType" = 'student' THEN s."full_name"
-        END as "senderName"
-       FROM "Message" m
-       LEFT JOIN "Teacher" t ON m."senderId" = t.id AND m."senderType" = 'teacher'
-       LEFT JOIN "Student" s ON m."senderId" = s.id AND m."senderType" = 'student'
-       WHERE m."sessionId" = $1
+          WHEN m."senderType" = 'teacher' THEN t.name 
+          WHEN m."senderType" = 'student' THEN s."full_name" 
+        END as "senderName" 
+       FROM "Message" m 
+       LEFT JOIN "Teacher" t ON m."senderId" = t.id AND m."senderType" = 'teacher' 
+       LEFT JOIN "Student" s ON m."senderId" = s.id AND m."senderType" = 'student' 
+       WHERE m."sessionId" = $1 
        ORDER BY m."timestamp" ASC`,
       [sessionId]
     );
-    
     res.json(result.rows);
   } catch (err) {
     console.error('Ошибка получения сообщений:', err);
@@ -349,21 +520,35 @@ app.get('/api/messages/:sessionId', async (req, res) => {
   }
 });
 
-// ======================
-// API ДЛЯ АУДИОЗАПИСЕЙ
-// ======================
-
+/**
+ Загрузка аудиозаписи
+  POST /api/audio/upload
+  Загружает аудиофайл с вебинара и сохраняет метаданные в БД
+  Использует multer middleware для обработки файла
+  После сохранения оповещает всех участников сессии через WebSocket
+  
+  Тело запроса (multipart/form-data):
+    - audio: файл
+    - sessionId: ID сессии
+    - teacherId: ID преподавателя
+    - title: название (опционально)
+    - description: описание (опционально)
+    - duration: длительность (опционально)
+  объект с созданной записью
+ */
 app.post('/api/audio/upload', upload.single('audio'), async (req, res) => {
   try {
+    // Проверяем, загружен ли файл
     if (!req.file) {
       return res.status(400).json({ error: 'Файл не загружен' });
     }
 
+    // Извлекаем данные из тела запроса
     const { sessionId, teacherId, title, description, duration } = req.body;
-    
-    const filePath = `/uploads/audio/${req.file.filename}`;
-    const fileSize = req.file.size;
-    
+    const filePath = `/uploads/audio/${req.file.filename}`; // URL для доступа к файлу
+    const fileSize = req.file.size; // Размер в байтах
+
+    // Сохраняем метаданные в БД
     const result = await pool.query(
       `INSERT INTO "AudioRecording" 
        ("sessionId", "teacherId", "fileName", "filePath", "fileSize", "duration", "title", "description", "transcription") 
@@ -372,6 +557,7 @@ app.post('/api/audio/upload', upload.single('audio'), async (req, res) => {
       [sessionId, teacherId, req.file.filename, filePath, fileSize, duration, title, description, '']
     );
 
+    // Если указан sessionId, оповещаем всех в комнате через WebSocket
     if (sessionId) {
       const roomName = `session_${sessionId}`;
       io.to(roomName).emit('audio_recording_added', {
@@ -391,17 +577,24 @@ app.post('/api/audio/upload', upload.single('audio'), async (req, res) => {
   }
 });
 
+/**
+ Получение аудиозаписей лекции
+  GET /api/audio/session/:sessionId
+  Возвращает все аудиозаписи для указанной сессии
+  
+  Параметры URL: sessionId
+  Ответ: массив объектов AudioRecording с полем teacherName
+ */
 app.get('/api/audio/session/:sessionId', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT ar.*, t.name as "teacherName"
-       FROM "AudioRecording" ar
-       LEFT JOIN "Teacher" t ON ar."teacherId" = t.id
-       WHERE ar."sessionId" = $1
+      `SELECT ar.*, t.name as "teacherName" 
+       FROM "AudioRecording" ar 
+       LEFT JOIN "Teacher" t ON ar."teacherId" = t.id 
+       WHERE ar."sessionId" = $1 
        ORDER BY ar."createdAt" DESC`,
       [req.params.sessionId]
     );
-    
     res.json(result.rows);
   } catch (err) {
     console.error('Ошибка получения аудиозаписей:', err);
@@ -409,20 +602,26 @@ app.get('/api/audio/session/:sessionId', async (req, res) => {
   }
 });
 
+/**
+ Получение конкретной аудио!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! тут не работает 
+  GET /api/audio/:recordingId
+  Возвращает данные конкретной аудиозаписи по ID
+  
+  Параметры URL: recordingId
+  Ответ: объект AudioRecording с полем teacherName или 404
+ */
 app.get('/api/audio/:recordingId', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT ar.*, t.name as "teacherName"
-       FROM "AudioRecording" ar
-       LEFT JOIN "Teacher" t ON ar."teacherId" = t.id
+      `SELECT ar.*, t.name as "teacherName" 
+       FROM "AudioRecording" ar 
+       LEFT JOIN "Teacher" t ON ar."teacherId" = t.id 
        WHERE ar.id = $1`,
       [req.params.recordingId]
     );
-    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Аудиозапись не найдена' });
     }
-    
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Ошибка получения аудиозаписи:', err);
@@ -430,25 +629,36 @@ app.get('/api/audio/:recordingId', async (req, res) => {
   }
 });
 
+/**
+ Удаление аудиозаписи
+  DELETE /api/audio/:recordingId
+  Удаляет запись из БД и соответствующий файл с диска
+  
+  Параметры URL: recordingId
+  Ответ: { success: true, message: 'Аудиозапись удалена' } или 404
+ */
 app.delete('/api/audio/:recordingId', async (req, res) => {
   try {
+    // Сначала получаем информацию о записи
     const result = await pool.query(
       'SELECT * FROM "AudioRecording" WHERE id = $1',
       [req.params.recordingId]
     );
-    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Аудиозапись не найдена' });
     }
-    
+
     const recording = result.rows[0];
-    const filePath = path.join(audioDir, recording.fileName);
+    const filePath = path.join(audioDir, recording.fileName); // Полный путь к файлу
+    
+    // Удаляем файл с диска, если существует
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
-    
+
+    // Удаляем запись из БД
     await pool.query('DELETE FROM "AudioRecording" WHERE id = $1', [req.params.recordingId]);
-    
+
     res.json({ success: true, message: 'Аудиозапись удалена' });
   } catch (err) {
     console.error('Ошибка удаления аудиозаписи:', err);
@@ -456,18 +666,25 @@ app.delete('/api/audio/:recordingId', async (req, res) => {
   }
 });
 
+/**
+  Получение аудиозаписи преподавтеля
+  GET /api/audio/teacher/:teacherId
+  Возвращает все аудиозаписи преподавателя с информацией о сессии и курсе
+  
+  Параметры URL: teacherId
+  Ответ: массив объектов AudioRecording с полями sessionDate и courseTitle
+ */
 app.get('/api/audio/teacher/:teacherId', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT ar.*, s."startTime" as "sessionDate", c.title as "courseTitle"
-       FROM "AudioRecording" ar
-       LEFT JOIN "Session" s ON ar."sessionId" = s.id
-       LEFT JOIN "Course" c ON s."courseId" = c.id
-       WHERE ar."teacherId" = $1
+      `SELECT ar.*, s."startTime" as "sessionDate", c.title as "courseTitle" 
+       FROM "AudioRecording" ar 
+       LEFT JOIN "Session" s ON ar."sessionId" = s.id 
+       LEFT JOIN "Course" c ON s."courseId" = c.id 
+       WHERE ar."teacherId" = $1 
        ORDER BY ar."createdAt" DESC`,
       [req.params.teacherId]
     );
-    
     res.json(result.rows);
   } catch (err) {
     console.error('Ошибка получения аудиозаписей преподавателя:', err);
@@ -475,66 +692,71 @@ app.get('/api/audio/teacher/:teacherId', async (req, res) => {
   }
 });
 
-
-// ТРАНСКРИБИРОВАНИЕ АУДИО 
-
-
+/**
+  Транскрибация аудио
+  POST /api/audio/:recordingId/transcribe
+  Отправляет аудиофайл на сервер Whisper для распознавания речи
+  Сохраняет полученный текст в БД
+  
+  Параметры URL: recordingId
+  Ответ: { success: true, text, wordCount, processingTime } или ошибка
+ */
 app.post('/api/audio/:recordingId/transcribe', async (req, res) => {
   const { recordingId } = req.params;
-  
   try {
-    console.log(`🔍 Начинаем транскрибирование записи ID: ${recordingId}`);
+    console.log('Начинаем транскрибирование записи ID:', recordingId);
     
-    // 1. Получаем запись из БД
+    // Получаем информацию о записи из БД
     const recResult = await pool.query(
       'SELECT "fileName" FROM "AudioRecording" WHERE id = $1',
       [recordingId]
     );
-    
     if (recResult.rows.length === 0) {
-      console.log(`Запись ID ${recordingId} не найдена в БД`);
+      console.log('Запись ID', recordingId, 'не найдена в БД');
       return res.status(404).json({ error: 'Запись не найдена' });
     }
-    
+
     const { fileName } = recResult.rows[0];
-    const filePath = path.join(__dirname, 'uploads', 'audio', fileName);
-    
-    // 2. Проверяем существование файла
+    const filePath = path.join(__dirname, 'uploads', 'audio', fileName); // Полный путь к файлу
+
+    // Проверяем существование файла
     if (!fs.existsSync(filePath)) {
-      console.log(`Файл не найден на диске: ${filePath}`);
+      console.log('Файл не найден на диске:', filePath);
       return res.status(404).json({ error: 'Аудиофайл не найден' });
     }
+
+    console.log('Отправляем файл в Whisper:', fileName);
     
-    // 3. Отправляем файл в Whisper
-    console.log(`📤 Отправляем файл в Whisper: ${fileName}`);
+    // Формируем multipart/form-data запрос
     const formData = new FormData();
     formData.append('audio', fs.createReadStream(filePath), {
       filename: fileName
     });
-    
-    const startTime = Date.now();
-    
+
+    const startTime = Date.now(); // Засекаем время начала
+
+    // Отправляем запрос к локальному серверу Whisper (порт 5000)
     const response = await axios.post('http://localhost:5000/transcribe', formData, {
       headers: formData.getHeaders(),
-      timeout: 300000 // 5 минут таймаут
+      timeout: 300000 // Таймаут 5 минут (для длинных аудио)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     });
-    
-    const processingTime = Date.now() - startTime;
-    
-    // 4. Проверяем ответ от Whisper
+
+    const processingTime = Date.now() - startTime; // Вычисляем время обработки
+
+    // Если получили текст, сохраняем в БД
     if (response.data?.text) {
       const transcriptionText = response.data.text.trim();
-      const wordCount = transcriptionText.split(/\s+/).length;
+      const wordCount = transcriptionText.split(/\s+/).length; // Подсчет слов
       
-      // 5. Сохраняем транскрипцию в БД
       await pool.query(
         `UPDATE "AudioRecording" 
-         SET "transcription" = $1
+         SET "transcription" = $1,
+             "lastEditedAt" = NOW()
          WHERE id = $2`,
         [transcriptionText, recordingId]
       );
       
-      console.log(`Транскрипция сохранена в БД. Слов: ${wordCount}`);
+      console.log('Транскрипция сохранена в БД. Слов:', wordCount);
       
       res.json({
         success: true,
@@ -542,15 +764,12 @@ app.post('/api/audio/:recordingId/transcribe', async (req, res) => {
         wordCount: wordCount,
         processingTime: processingTime
       });
-      
     } else {
       throw new Error('Whisper вернул пустой результат');
     }
-    
   } catch (err) {
-    console.error(' Ошибка транскрибирования:', err.message);
-    
-    res.status(500).json({ 
+    console.error('Ошибка транскрибирования:', err.message);
+    res.status(500).json({
       success: false,
       error: 'Ошибка транскрибирования',
       details: process.env.NODE_ENV === 'development' ? err.message : undefined
@@ -558,34 +777,220 @@ app.post('/api/audio/:recordingId/transcribe', async (req, res) => {
   }
 });
 
+/**
+ Получение транскрибации для редактирования
+  GET /api/audio/:recordingId/transcription/edit
+  Возвращает данные записи с транскрипцией для редактирования
+  
+  Параметры URL: recordingId
+  Ответ: объект с transcription, title, description
+ */
+app.get('/api/audio/:recordingId/transcription/edit', async (req, res) => {
+  try {
+    const { recordingId } = req.params;
+    console.log('Запрос транскрипции для редактирования ID:', recordingId);
+    
+    const result = await pool.query(
+      `SELECT ar.id, ar."transcription", ar.title, ar.description, ar."createdAt", 
+              ar.duration, ar."fileSize", ar."filePath", t.name as "teacherName" 
+       FROM "AudioRecording" ar 
+       LEFT JOIN "Teacher" t ON ar."teacherId" = t.id 
+       WHERE ar.id = $1`,
+      [recordingId]
+    );
+    
+    if (result.rows.length === 0) {
+      console.log('Запись ID', recordingId, 'не найдена');
+      return res.status(404).json({ 
+        success: false,
+        error: 'Запись не найдена' 
+      });
+    }
 
-// WEBSOCKET ЛОГИКА
+    const recording = result.rows[0];
+    console.log('Транскрипция найдена, длина:', (recording.transcription || '').length, 'символов');
+
+    res.json({
+      id: recording.id,
+      transcription: recording.transcription || '',
+      title: recording.title || 'Без названия',
+      description: recording.description || '',
+      createdAt: recording.createdAt,
+      duration: recording.duration,
+      fileSize: recording.fileSize,
+      filePath: recording.filePath,
+      teacherName: recording.teacherName
+    });
+  } catch (err) {
+    console.error('Ошибка получения транскрипции:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Ошибка сервера при получении транскрипции',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+
+/**
+ сохранение трак=нскрипции, которую отредактировали
+  PUT /api/audio/:recordingId/transcription/edit
+  Сохраняет отредактированный пользователем текст транскрипции
+  
+  Параметры URL: recordingId
+  Тело запроса: { transcription }
+  Ответ: { success: true, recording, message }
+ */
+app.put('/api/audio/:recordingId/transcription/edit', async (req, res) => {
+  const { recordingId } = req.params;
+  const { transcription } = req.body;
+  
+  console.log('Сохранение транскрипции для записи ID:', recordingId);
+  console.log('Длина транскрипции:', (transcription || '').length, 'символов');
+  
+  
+  if (transcription === undefined || transcription === null) {
+    return res.status(400).json({
+      success: false,
+      error: 'Текст транскрипции обязателен'
+    });
+  }
+  
+  try {
+    // Проверяем существование записи
+    const checkResult = await pool.query(
+      'SELECT id FROM "AudioRecording" WHERE id = $1',
+      [recordingId]
+    );
+    if (checkResult.rows.length === 0) {
+      console.log('Запись ID', recordingId, 'не найдена при сохранении');
+      return res.status(404).json({
+        success: false,
+        error: 'Запись не найдена'
+      });
+    }
+
+    // Обновляем транскрипцию и время последнего редактирования
+    const updateResult = await pool.query(
+      `UPDATE "AudioRecording" 
+       SET "transcription" = $1,
+           "lastEditedAt" = NOW()
+       WHERE id = $2 
+       RETURNING id, "transcription", "lastEditedAt"`,
+      [transcription, recordingId]
+    );
+
+    console.log('Транскрипция успешно сохранена для записи ID:', recordingId);
+
+    res.json({
+      success: true,
+      recording: updateResult.rows[0],
+      message: 'Транскрипция успешно сохранена'
+    });
+  } catch (err) {
+    console.error('Ошибка сохранения транскрипции:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Ошибка сервера при сохранении транскрипции',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
 
 
+ //Эти эндпоинты помогают при отладке и тестировании
+ 
+
+/**
+ GET /api/debug/audio/:id
+ Возвращает данные из таблицы AudioRecording для отладки
+ */
+app.get('/api/debug/audio/:id', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM "AudioRecording" WHERE id = $1', [req.params.id]);
+    res.json({
+      exists: result.rows.length > 0,
+      data: result.rows[0]
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+  GET /api/test/transcription
+  Тестовый эндпоинт для проверки работы с транскрипциями
+  Возвращает первые 5 записей
+ */
+app.get('/api/test/transcription', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, title FROM "AudioRecording" LIMIT 5');
+    res.json({
+      success: true,
+      recordings: result.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Состояния WebSocket
+/**
+ activeConnections: Map всех активных WebSocket соединений
+  Ключ: socket.id, Значение: объект с информацией о подключении
+ */
 const activeConnections = new Map();
+
+/**
+ sessionRooms: Map комнат сессий
+  Ключ: имя комнаты (session_{sessionId}), Значение: Set из socket.id
+ */
 const sessionRooms = new Map();
+
+/**
+  sessionParticipants: Map участников сессий с детальной информацией
+  Ключ: имя комнаты (session_{sessionId}), Значение: Map с информацией об участниках
+ */
 const sessionParticipants = new Map();
 
+// Обработчики WebSockets
+/**
+  Обработчик нового WebSocket подключения
+  Регистрирует соединение и настраивает все обработчики событий
+ */
 io.on('connection', (socket) => {
   console.log('Новое подключение:', socket.id);
   
+  // Регистрируем новое соединение в activeConnections
   activeConnections.set(socket.id, {
     socketId: socket.id,
     connectedAt: new Date(),
-    room: null
+    room: null,
+    sessionId: null,
+    userType: null,
+    userId: null,
+    userName: null
   });
 
-  // WebRTC: ОСНОВНЫЕ СОБЫТИЯ 
-
+  // Демонстрация экрана
+  /**
+   Событие: teacher_start_screen_share
+   Преподаватель начинает демонстрацию экрана для всех студентов
+    
+    Данные: { sessionId, streamType }
+   */
   socket.on('teacher_start_screen_share', ({ sessionId, streamType = 'teacher_to_all' }) => {
-    const roomName = `session_${sessionId}`;
     const teacherInfo = activeConnections.get(socket.id);
     
-    if (!teacherInfo || teacherInfo.userType !== 'teacher') {
-      socket.emit('error', { message: 'То' });
+  
+    
+    // Проверяем соответствие сессии
+    if (teacherInfo.sessionId != sessionId) {
+      socket.emit('error', { message: 'Несоответствие сессии' });
       return;
     }
-
+    
+    // Оповещаем всех в комнате о начале трансляции
+    const roomName = `session_${sessionId}`;
     io.to(roomName).emit('teacher_screen_share_started', {
       teacherSocketId: socket.id,
       teacherName: teacherInfo.userName,
@@ -594,50 +999,101 @@ io.on('connection', (socket) => {
     });
   });
 
+  /**
+   Событие: teacher_send_offer_to_students
+   Преподаватель отправляет WebRTC offer выбранным студентам
+    Используется для установки P2P соединения для демонстрации экрана
+    
+    Данные: { sessionId, studentSocketIds, sdp }
+   */
   socket.on('teacher_send_offer_to_students', ({ sessionId, studentSocketIds, sdp }) => {
     const teacherInfo = activeConnections.get(socket.id);
+    
+    // Проверяем права преподавателя
     if (!teacherInfo || teacherInfo.userType !== 'teacher') {
+      console.warn('Отклонён запрос от не-преподавателя:', socket.id);
+      socket.emit('error', { message: 'Только преподаватель может отправлять офферы' });
+      return;
+    }
+    
+    // Проверяем соответствие сессии
+    if (teacherInfo.sessionId != sessionId) {
+      console.warn('Несоответствие сессии у преподавателя', socket.id, ': ожидаемая', teacherInfo.sessionId, ', получена', sessionId);
+      socket.emit('error', { message: 'Несоответствие сессии' });
       return;
     }
 
+    // Отправляем offer каждому студенту из списка
     studentSocketIds.forEach(studentSocketId => {
       const studentSocket = io.sockets.sockets.get(studentSocketId);
       if (studentSocket) {
-        studentSocket.emit('teacher_webrtc_offer', {
-          from: socket.id,
-          sdp,
-          streamType: 'teacher_to_all',
-          sessionId
-        });
+        const studentInfo = activeConnections.get(studentSocketId);
+        // Проверяем, что студент в той же сессии
+        if (studentInfo && studentInfo.sessionId == sessionId) {
+          studentSocket.emit('teacher_webrtc_offer', {
+            from: socket.id,
+            sdp,
+            streamType: 'teacher_to_all',
+            sessionId
+          });
+          console.log('Оффер отправлен студенту', studentSocketId, 'от преподавателя', socket.id);
+        } else {
+          console.warn('Студент', studentSocketId, 'не в сессии', sessionId);
+        }
+      } else {
+        console.warn('Студент', studentSocketId, 'не подключен');
       }
     });
   });
 
+  /**
+   Событие: teacher_request_student_screen
+   Преподаватель запрашивает демонстрацию экрана конкретного студента
+   
+   Данные: { sessionId, studentSocketId }
+   */
   socket.on('teacher_request_student_screen', ({ sessionId, studentSocketId }) => {
     const teacherInfo = activeConnections.get(socket.id);
+    
+    
     if (!teacherInfo || teacherInfo.userType !== 'teacher') {
-      socket.emit('error', { message: 'То' });
+      socket.emit('error', { message: 'Тип не определился' });
+      return;
+    }
+    
+    // Проверяем соответствие сессии
+    if (teacherInfo.sessionId != sessionId) {
+      socket.emit('error', { message: 'Несоответствие сессии' });
       return;
     }
 
     const roomName = `session_${sessionId}`;
     const participantsMap = sessionParticipants.get(roomName);
     const studentInfo = participantsMap?.get(studentSocketId);
-    
+
+    // Проверяем существование студента в сессии
     if (!studentInfo || studentInfo.userType !== 'student') {
-      socket.emit('error', { message: 'Студент не найден или не подключен' });
+      socket.emit('error', { message: 'Студент не найден или не подключен к сессии' });
       return;
     }
 
+    const studentConnection = activeConnections.get(studentSocketId);
+    if (!studentConnection || studentConnection.sessionId != sessionId) {
+      socket.emit('error', { message: 'Студент не в текущей сессии' });
+      return;
+    }
+
+    // Отправляем запрос студенту
     const studentSocket = io.sockets.sockets.get(studentSocketId);
     if (studentSocket) {
       studentSocket.emit('teacher_requested_student_screen', {
         teacherSocketId: socket.id,
         teacherName: teacherInfo.userName,
         sessionId,
-        requestId: uuidv4().slice(0, 8)
+        requestId: uuidv4().slice(0, 8) // Уникальный ID запроса
       });
       
+      // Подтверждаем преподавателю, что запрос отправлен
       socket.emit('screen_request_sent', {
         studentSocketId,
         studentName: studentInfo.userName,
@@ -648,6 +1104,16 @@ io.on('connection', (socket) => {
     }
   });
 
+  /**
+   Обработки WebRTC
+   Эти события используются для обмена SDP (Session Description Protocol)
+   и ICE кандидатами для установки P2P соединения
+   */
+
+  /**
+   Событие: webrtc_offer
+   Отправка WebRTC offer другому участнику
+   */
   socket.on('webrtc_offer', ({ to, sdp, streamType, sessionId }) => {
     const targetSocket = io.sockets.sockets.get(to);
     if (targetSocket) {
@@ -655,6 +1121,10 @@ io.on('connection', (socket) => {
     }
   });
 
+  /**
+   Событие: student_webrtc_offer
+   Студент отправляет offer преподавателю (для демонстрации своего экрана)
+   */
   socket.on('student_webrtc_offer', ({ to, sdp, streamType, sessionId }) => {
     const targetSocket = io.sockets.sockets.get(to);
     if (targetSocket) {
@@ -662,6 +1132,10 @@ io.on('connection', (socket) => {
     }
   });
 
+  /**
+   Событие: webrtc_answer
+   Ответ на полученный offer
+   */
   socket.on('webrtc_answer', ({ to, sdp }) => {
     const targetSocket = io.sockets.sockets.get(to);
     if (targetSocket) {
@@ -669,6 +1143,10 @@ io.on('connection', (socket) => {
     }
   });
 
+  /**
+   Событие: webrtc_ice_candidate
+   Обмен ICE кандидатами для установки соединения через NAT
+   */
   socket.on('webrtc_ice_candidate', ({ to, candidate }) => {
     const targetSocket = io.sockets.sockets.get(to);
     if (targetSocket) {
@@ -676,15 +1154,23 @@ io.on('connection', (socket) => {
     }
   });
 
+  /**
+   Событие: stop_screen_share
+   Остановка демонстрации экрана (преподавателем или студентом)
+   
+   Данные: { sessionId, streamType, targetSocketId, requestId }
+   */
   socket.on('stop_screen_share', ({ sessionId, streamType, targetSocketId, requestId }) => {
     const roomName = `session_${sessionId}`;
     
     if (streamType === 'teacher_to_all') {
+      // Преподаватель останавливает трансляцию для всех
       io.to(roomName).emit('teacher_screen_share_stopped', {
         teacherSocketId: socket.id,
         timestamp: new Date()
       });
     } else if (streamType === 'student_to_teacher' && targetSocketId) {
+      // Студент останавливает трансляцию для преподавателя
       const teacherSocket = io.sockets.sockets.get(targetSocketId);
       if (teacherSocket) {
         teacherSocket.emit('student_screen_share_stopped', {
@@ -693,7 +1179,8 @@ io.on('connection', (socket) => {
           timestamp: new Date()
         });
       }
-    } else if (streamType === 'student_screen_share') {
+    } else if (streamType === 'student_screen_share' && targetSocketId) {
+      // Преподаватель прекращает просмотр экрана студента
       const studentSocket = io.sockets.sockets.get(targetSocketId);
       if (studentSocket) {
         studentSocket.emit('teacher_stopped_watching', {
@@ -704,15 +1191,38 @@ io.on('connection', (socket) => {
     }
   });
 
+  /**
+   участие в вебинаре
+   */
+
+  /**
+    Событие: join_webinar
+    Подключение пользователя (преподавателя или студента) к вебинару
+    Обрабатывает:
+   Добавление в комнату
+   Обновление списка участников
+   Оповещение других участников
+   Обработку переподключений
+    
+    Данные: { sessionId, userType, userId, userName }
+   */
   socket.on('join_webinar', async (data) => {
     const { sessionId, userType, userId, userName } = data;
     const roomName = `session_${sessionId}`;
-    
+
+    console.log('=== JOIN WEBINAR ===');
+    console.log('Socket ID:', socket.id);
+    console.log('Data:', { sessionId, userType, userId, userName });
+    console.log('Активные комнаты до:', Array.from(sessionParticipants.keys()));
+
+    // Создаем Map для участников, если его еще нет
     if (!sessionParticipants.has(roomName)) {
       sessionParticipants.set(roomName, new Map());
     }
-    
+
     const participantsMap = sessionParticipants.get(roomName);
+    
+    // Проверяем, не было ли у пользователя другого подключения (переподключение)
     let existingSocketId = null;
     for (const [sockId, participant] of participantsMap.entries()) {
       if (participant.userId === userId && participant.userType === userType) {
@@ -720,20 +1230,28 @@ io.on('connection', (socket) => {
         break;
       }
     }
-    
-    if (existingSocketId) {
+
+    // Если есть существующее подключение, удаляем его
+    if (existingSocketId && existingSocketId !== socket.id) {
+      console.log(`Пользователь ${userName} (${userType}) переподключается: ${existingSocketId} -> ${socket.id}`);
+      
       participantsMap.delete(existingSocketId);
-      const oldSocket = io.sockets.sockets.get(existingSocketId);
-      if (oldSocket) {
-        oldSocket.leave(roomName);
-        oldSocket.disconnect(true);
-      }
-      if (sessionRooms.has(roomName)) {
-        sessionRooms.get(roomName).delete(existingSocketId);
-      }
-      activeConnections.delete(existingSocketId);
+      
+      // Оповещаем других об уходе старого подключения
+      io.to(roomName).emit('user_left', {
+        userType,
+        userName,
+        socketId: existingSocketId,
+        timestamp: new Date(),
+        reason: 'reconnected'
+      });
+      
+      // Обновляем список участников
+      const updatedParticipants = Array.from(participantsMap.values());
+      io.to(roomName).emit('participants_list', updatedParticipants);
     }
-    
+
+    // Добавляем новое подключение
     participantsMap.set(socket.id, {
       userType,
       userId,
@@ -742,10 +1260,11 @@ io.on('connection', (socket) => {
       joinedAt: new Date(),
       isReconnect: !!existingSocketId
     });
-    
+
+    // Обновляем информацию в activeConnections
     activeConnections.set(socket.id, {
       ...activeConnections.get(socket.id),
-      sessionId,
+      sessionId: sessionId,
       userType,
       userId,
       userName,
@@ -753,17 +1272,21 @@ io.on('connection', (socket) => {
       joinedAt: new Date(),
       isReconnect: !!existingSocketId
     });
-    
+
+    // Добавляем сокет в комнату
     socket.join(roomName);
-    
+
+    // Добавляем в sessionRooms
     if (!sessionRooms.has(roomName)) {
       sessionRooms.set(roomName, new Set());
     }
     sessionRooms.get(roomName).add(socket.id);
-    
+
+    // Отправляем всем обновленный список участников
     const roomParticipants = Array.from(participantsMap.values());
     io.to(roomName).emit('participants_list', roomParticipants);
-    
+
+    // Если это не переподключение, оповещаем других о новом участнике
     if (!existingSocketId) {
       socket.to(roomName).emit('user_joined', {
         userType,
@@ -773,13 +1296,16 @@ io.on('connection', (socket) => {
         timestamp: new Date()
       });
     }
-    
+
+    // Специфичная логика для преподавателей и студентов
     if (userType === 'teacher') {
+      // Отправляем преподавателю список студентов для мониторинга
       const students = roomParticipants.filter(p => p.userType === 'student');
       socket.emit('students_for_monitoring', students);
     }
-    
+
     if (userType === 'student') {
+      // Сообщаем студенту, если преподаватель уже в комнате
       const teacher = roomParticipants.find(p => p.userType === 'teacher');
       if (teacher) {
         socket.emit('teacher_present', {
@@ -788,20 +1314,41 @@ io.on('connection', (socket) => {
         });
       }
     }
+
+    console.log(`Пользователь ${userName} (${userType}) подключился к сессии ${sessionId}. Всего участников: ${roomParticipants.length}`);
+    console.log('Участники в комнате:', roomParticipants.map(p => ({
+      name: p.userName,
+      type: p.userType,
+      socketId: p.socketId
+    })));
   });
 
+  /**
+    Событие: leave_webinar
+    Пользователь покидает вебинар
+   Удаляет из всех структур данных и оповещает других
+    
+    Данные: { sessionId }
+   */
   socket.on('leave_webinar', ({ sessionId }) => {
     const connectionInfo = activeConnections.get(socket.id);
     if (!connectionInfo) return;
     
     const { userType, userName, room } = connectionInfo;
     
+    console.log(`Пользователь ${userName} (${userType}) покидает вебинар`);
+    
+    // Удаляем из комнаты, если есть
     if (room && sessionRooms.has(room)) {
       sessionRooms.get(room).delete(socket.id);
+      
       if (sessionParticipants.has(room)) {
-        sessionParticipants.get(room).delete(socket.id);
         const participantsMap = sessionParticipants.get(room);
+        participantsMap.delete(socket.id);
+        
         const roomParticipants = Array.from(participantsMap.values());
+        
+        // Оповещаем всех об изменении
         io.to(room).emit('participants_list', roomParticipants);
         io.to(room).emit('user_left', {
           userType,
@@ -809,35 +1356,68 @@ io.on('connection', (socket) => {
           socketId: socket.id,
           timestamp: new Date()
         });
+        
+        // Если комната опустела - удаляем её
         if (roomParticipants.length === 0) {
           sessionParticipants.delete(room);
+          sessionRooms.delete(room);
         }
       }
     }
+    
     activeConnections.delete(socket.id);
+    socket.leave(room);
   });
 
+  /**
+   Событие: get_participants_list
+    Запрос актуального списка участников сессии
+    
+    Данные: { sessionId }
+   */
   socket.on('get_participants_list', ({ sessionId }) => {
+    console.log('=== GET PARTICIPANTS LIST ===');
+    console.log('Socket ID:', socket.id);
+    console.log('Session ID:', sessionId);
+    
     const roomName = `session_${sessionId}`;
+    console.log('Room name:', roomName);
+    console.log('Есть ли комната?', sessionParticipants.has(roomName));
+    
     if (sessionParticipants.has(roomName)) {
       const participantsMap = sessionParticipants.get(roomName);
       const roomParticipants = Array.from(participantsMap.values());
+      console.log('Участники:', roomParticipants.map(p => ({
+        name: p.userName,
+        type: p.userType,
+        socketId: p.socketId
+      })));
       socket.emit('participants_list', roomParticipants);
     } else {
+      console.log('Комната не найдена, отправляем пустой список');
       socket.emit('participants_list', []);
     }
   });
 
+  /**
+   Событие: send_message
+   Отправка сообщения в чат сессии
+   Сохраняет сообщение в БД и рассылает всем участникам
+    
+    Данные: { sessionId, message, senderType, senderId, senderName }
+   */
   socket.on('send_message', async (data) => {
     const { sessionId, message, senderType, senderId, senderName } = data;
     const timestamp = new Date();
-
+    
     try {
+      // Сохраняем в БД
       await pool.query(
         'INSERT INTO "Message" ("sessionId", "senderType", "senderId", text, "timestamp") VALUES ($1, $2, $3, $4, $5)',
         [sessionId, senderType, senderId, message, timestamp]
       );
 
+      // Рассылаем всем в комнате
       const roomName = `session_${sessionId}`;
       io.to(roomName).emit('new_message', {
         text: message,
@@ -852,6 +1432,13 @@ io.on('connection', (socket) => {
     }
   });
 
+  /**
+   Событие: start_recording
+   Уведомление о начале записи аудио
+   Рассылается всем участникам сессии
+    
+    Данные: { sessionId, teacherId, teacherName }
+   */
   socket.on('start_recording', ({ sessionId, teacherId, teacherName }) => {
     const roomName = `session_${sessionId}`;
     io.to(roomName).emit('recording_started', {
@@ -861,6 +1448,13 @@ io.on('connection', (socket) => {
     });
   });
 
+  /**
+   Событие: stop_recording
+   Уведомление об остановке записи аудио
+   Рассылается всем участникам сессии
+    
+   Данные: { sessionId, teacherId, teacherName }
+   */
   socket.on('stop_recording', ({ sessionId, teacherId, teacherName }) => {
     const roomName = `session_${sessionId}`;
     io.to(roomName).emit('recording_stopped', {
@@ -870,31 +1464,52 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('student_activity', ({ sessionId, activity }) => {
-    const studentInfo = activeConnections.get(socket.id);
-    if (studentInfo && studentInfo.userType === 'student') {
-      const roomName = `session_${sessionId}`;
-      socket.to(roomName).emit('student_activity_update', {
-        studentId: studentInfo.userId,
-        studentName: studentInfo.userName,
-        activity,
-        timestamp: new Date()
-      });
-    }
-  });
+  /**
+   Событие: student_activity не получилось внедрить !!!!!!!!!!!!!!!!!
+   Отслеживание активности студента (например, отвлекся ли он)
+    
+   Данные: { sessionId, activity }
+   */
+  // socket.on('student_activity', ({ sessionId, activity }) => {
+  //   const studentInfo = activeConnections.get(socket.id);
+  //   if (studentInfo && studentInfo.userType === 'student') {
+  //     const roomName = `session_${sessionId}`;
+  //     socket.to(roomName).emit('student_activity_update', {
+  //       studentId: studentInfo.userId,
+  //       studentName: studentInfo.userName,
+  //       activity,
+  //       timestamp: new Date()
+  //     });
+  //   }
+  // });
 
+  /**
+   * Событие: disconnect
+   * Обработка отключения клиента
+   * Очищает все структуры данных и оповещает других
+   * 
+   * Данные: reason - причина отключения
+   */
   socket.on('disconnect', (reason) => {
     const connectionInfo = activeConnections.get(socket.id);
     if (connectionInfo) {
       const { sessionId, userType, userName, room } = connectionInfo;
       
-      if (room && sessionRooms.has(room)) {
-        sessionRooms.get(room).delete(socket.id);
+      console.log(`Пользователь отключился: ${userName} (${userType}), причина: ${reason}`);
+      
+      // Удаляем из всех структур данных
+      if (room) {
+        if (sessionRooms.has(room)) {
+          sessionRooms.get(room).delete(socket.id);
+        }
+        
         if (sessionParticipants.has(room)) {
-          sessionParticipants.get(room).delete(socket.id);
           const participantsMap = sessionParticipants.get(room);
+          participantsMap.delete(socket.id);
+          
           const roomParticipants = Array.from(participantsMap.values());
           io.to(room).emit('participants_list', roomParticipants);
+          
           io.to(room).emit('user_left', {
             userType,
             userName,
@@ -902,35 +1517,41 @@ io.on('connection', (socket) => {
             timestamp: new Date(),
             reason: reason
           });
+          
+          // Если комната опустела - удаляем
           if (roomParticipants.length === 0) {
             sessionParticipants.delete(room);
+            sessionRooms.delete(room);
           }
         }
       }
-      activeConnections.delete(socket.id);
       
-      if (userType === 'teacher' && room) {
-        io.to(room).emit('teacher_disconnected', {
-          teacherName: userName,
-          timestamp: new Date()
-        });
-      }
+      activeConnections.delete(socket.id);
     }
   });
 
+  /**
+   * Событие: error
+   * Обработка ошибок WebSocket
+   */
   socket.on('error', (error) => {
     console.error('Socket error:', error);
   });
 });
 
-// ======================
-// ДОПОЛНИТЕЛЬНЫЕ API
-// ======================
+// дополнительные http для websocket
 
+/**
+ * GET /api/sessions/:sessionId/info
+ * Получение информации о сессии: активна ли, сколько участников, есть ли преподаватель
+ * Используется для быстрой проверки статуса без подключения к WebSocket
+ * 
+ * Параметры URL: sessionId
+ * Ответ: { sessionId, isActive, participants, teacherOnline }
+ */
 app.get('/api/sessions/:sessionId/info', (req, res) => {
   const sessionId = req.params.sessionId;
   const roomName = `session_${sessionId}`;
-  
   const info = {
     sessionId,
     isActive: false,
@@ -949,6 +1570,16 @@ app.get('/api/sessions/:sessionId/info', (req, res) => {
   res.json(info);
 });
 
+/**
+ * GET /api/server/stats
+ * Статистика сервера:
+ * - Количество активных соединений
+ * - Количество активных сессий
+ * - Использование памяти
+ * - Количество аудиозаписей в БД
+ * 
+ *  объект со статистикой
+ */
 app.get('/api/server/stats', (req, res) => {
   const stats = {
     activeConnections: activeConnections.size,
@@ -957,7 +1588,8 @@ app.get('/api/server/stats', (req, res) => {
     memoryUsage: process.memoryUsage(),
     audioRecordings: 0
   };
-  
+
+  // Добавляем детальную информацию по сессиям
   stats.sessionParticipants = {};
   for (const [roomName, participantsMap] of sessionParticipants) {
     const sessionId = roomName.replace('session_', '');
@@ -968,7 +1600,8 @@ app.get('/api/server/stats', (req, res) => {
       students: roomParticipants.filter(p => p.userType === 'student').length
     };
   }
-  
+
+  // Получаем количество аудиозаписей из БД 
   pool.query('SELECT COUNT(*) FROM "AudioRecording"')
     .then(result => {
       stats.audioRecordings = parseInt(result.rows[0].count);
@@ -980,6 +1613,13 @@ app.get('/api/server/stats', (req, res) => {
     });
 });
 
+/**
+ * GET /api/health
+ * Проверка здоровья сервера
+ * Возвращает статус всех компонентов
+ * 
+ * Ответ: { status, timestamp, uptime, database, audioStorage, audioFilesCount }
+ */
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -991,33 +1631,37 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Запуск сервера
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`
-  ==========================================
-  Сервер запущен на всех интерфейсах
-  HTTP: http://localhost:${PORT}
-  WebSocket: ws://localhost:${PORT}
-  Аудио файлы: ${audioDir}
-  ==========================================
-  `);
+
+  console.log('HTTPS сервер запущен на порту:', PORT);
+  console.log('Аудио файлы:', audioDir);
   
+  // Выводим все доступные сетевые интерфейсы для удобства подключения
   const os = require('os');
   const networkInterfaces = os.networkInterfaces();
-  console.log('Доступные сетевые интерфейсы:');
+  console.log('\nДоступные сетевые интерфейсы:');
+  
   Object.keys(networkInterfaces).forEach(interfaceName => {
     networkInterfaces[interfaceName].forEach(interface => {
       if (interface.family === 'IPv4' && !interface.internal) {
-        console.log(`  ${interfaceName}: http://${interface.address}:${PORT}`);
+        console.log(`${interfaceName}: ${protocol}://${interface.address}:${PORT}`);
       }
     });
   });
-  console.log('==========================================');
+  
 });
 
+// Обработка завершение процесса
+
+/**
+ Обработка SIGTERM (сигнал завершения)
+ Используется при graceful shutdown в production (например, в Docker)
+ */
 process.on('SIGTERM', () => {
   console.log('Получен SIGTERM. Завершение работы...');
   server.close(() => {
-    console.log('HTTP сервер закрыт');
+    console.log('HTTPS сервер закрыт');
     pool.end(() => {
       console.log('PostgreSQL подключение закрыто');
       process.exit(0);
@@ -1025,10 +1669,14 @@ process.on('SIGTERM', () => {
   });
 });
 
+/**
+ Обработка SIGINT (Ctrl+C)
+ Используется при ручном завершении в development
+ */
 process.on('SIGINT', () => {
   console.log('Получен SIGINT. Завершение работы...');
   server.close(() => {
-    console.log('HTTP сервер закрыт');
+    console.log('HTTPS сервер закрыт');
     pool.end(() => {
       console.log('PostgreSQL подключение закрыто');
       process.exit(0);
@@ -1036,10 +1684,18 @@ process.on('SIGINT', () => {
   });
 });
 
+/**
+  Обработка необработанных исключений
+  Логируем ошибку, но не завершаем процесс
+ */
 process.on('uncaughtException', (error) => {
   console.error('Необработанное исключение:', error);
 });
 
+/**
+  Обработка необработанных отклонений промисов
+  Логируем ошибку, но не завершаем процесс
+ */
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Необработанный rejection:', reason);
 });
