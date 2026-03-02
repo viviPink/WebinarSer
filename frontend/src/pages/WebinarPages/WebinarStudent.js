@@ -39,9 +39,8 @@ const WebinarStudent = ({ sessionId, student, onExit }) => {
       setIsSharingScreen(true);
       setScreenSharingTo(teacherSocketId);
 
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
+      // Удалена конфигурация iceServers - STUN больше не используется
+      const pc = new RTCPeerConnection();
       
       stream.getTracks().forEach(track => {
         pc.addTrack(track, stream);
@@ -140,9 +139,8 @@ const WebinarStudent = ({ sessionId, student, onExit }) => {
         teacherPcRef.current.close();
       }
 
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
+      // Удалена конфигурация iceServers - STUN больше не используется
+      const pc = new RTCPeerConnection();
 
       pc.ontrack = (event) => {
         console.log('Получен трек от преподавателя', event);

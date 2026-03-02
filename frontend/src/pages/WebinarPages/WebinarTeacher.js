@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import WebinarTeacherView from './WebinarTeacherView';
+import AudioRecorder from '../../components/webinar/AudioRecorder';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://localhost:3001';
 const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'https://localhost:3001';
@@ -23,6 +24,7 @@ const WebinarTeacher = ({ sessionId, teacher, onExit }) => {
   const [transcriptions, setTranscriptions] = useState({});
   const [transcribing, setTranscribing] = useState({});
   const [editingTranscription, setEditingTranscription] = useState(null);
+  const [liveTranscription, setLiveTranscription] = useState('');
   
   const messagesEndRef = useRef(null);
   const isMountedRef = useRef(true);
@@ -44,9 +46,7 @@ const WebinarTeacher = ({ sessionId, teacher, onExit }) => {
       const newPeerConnections = new Map();
 
       for (const studentSocketId of studentSocketIds) {
-        const pc = new RTCPeerConnection({
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        });
+        const pc = new RTCPeerConnection();
 
         stream.getTracks().forEach(track => {
           pc.addTrack(track, stream);
@@ -227,9 +227,7 @@ const WebinarTeacher = ({ sessionId, teacher, onExit }) => {
     if (streamType === 'student_to_teacher') {
       console.log('Получен оффер от студента ' + from);
 
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
+      const pc = new RTCPeerConnection();
 
       pc.ontrack = (event) => {
         console.log('Получен трек от студента ' + from, event.streams);
@@ -325,6 +323,10 @@ const WebinarTeacher = ({ sessionId, teacher, onExit }) => {
     }));
     fetchRecordings();
     handleCloseTranscriptionEditor();
+  };
+
+  const handleTranscriptionUpdate = (text) => {
+    setLiveTranscription(text);
   };
 
   const formatTime = (seconds) => {
@@ -622,7 +624,7 @@ const WebinarTeacher = ({ sessionId, teacher, onExit }) => {
       studentsForMonitoring={studentsForMonitoring}
       connectionStatus={connectionStatus}
       localStream={localStream}
-      studentScreenStreams={studentScreenStreams} 
+      studentScreenStreams={studentScreenStreams}
       isTeacherBroadcasting={isTeacherBroadcasting}
       activeStudentScreen={activeStudentScreen}
       pendingScreenRequests={pendingScreenRequests}
@@ -630,6 +632,7 @@ const WebinarTeacher = ({ sessionId, teacher, onExit }) => {
       transcriptions={transcriptions}
       transcribing={transcribing}
       editingTranscription={editingTranscription}
+      liveTranscription={liveTranscription}
       messagesEndRef={messagesEndRef}
       studentVideoRef={studentVideoRef}
       teacherVideoRef={teacherVideoRef}
@@ -642,6 +645,7 @@ const WebinarTeacher = ({ sessionId, teacher, onExit }) => {
       handleOpenTranscriptionEditor={handleOpenTranscriptionEditor}
       handleCloseTranscriptionEditor={handleCloseTranscriptionEditor}
       handleSaveTranscription={handleSaveTranscription}
+      handleTranscriptionUpdate={handleTranscriptionUpdate}
       formatTime={formatTime}
       playRecording={playRecording}
       deleteRecording={deleteRecording}

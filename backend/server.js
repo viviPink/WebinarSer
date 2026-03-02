@@ -219,6 +219,9 @@ pool.on('error', (err) => console.error('Ошибка PostgreSQL:', err));
 // Обработка preflight запросов OPTIONS для CORS
 app.options('*', cors());
 
+
+
+
 // API эндпоинты
 
 /**
@@ -230,18 +233,23 @@ app.options('*', cors());
   Тело запроса: { name, email }
   Ответ: объект Teacher
  */
+/**
+Аутентификация преподавателя
+POST /api/teacher/login
+Вход или регистрация преподавателя
+Тело запроса: { id, mail, email }
+Ответ: объект Teacher
+*/
 app.post('/api/teacher/login', async (req, res) => {
-  const { name, email } = req.body;
+  const { id, mail, email } = req.body;
   try {
-    // Ищем преподавателя по email
     let result = await pool.query('SELECT * FROM "Teacher" WHERE email = $1', [email]);
     let teacher = result.rows[0];
     
-    // Если не найден - создаем нового
     if (!teacher) {
       const insert = await pool.query(
-        'INSERT INTO "Teacher" (name, email) VALUES ($1, $2) RETURNING *',
-        [name, email]
+        'INSERT INTO "Teacher" (id, mail, email) VALUES ($1, $2, $3) RETURNING *',
+        [id, mail, email]
       );
       teacher = insert.rows[0];
     }
@@ -251,6 +259,174 @@ app.post('/api/teacher/login', async (req, res) => {
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
+
+
+
+
+/**
+ * GET /api/courses/:courseId/sessions
+ * Возвращает все сессии для указанного курса
+ */
+app.get('/api/courses/:courseId/sessions', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT s.*, c.title as "courseTitle" 
+       FROM "Session" s 
+       JOIN "Course" c ON s."courseId" = c.id 
+       WHERE s."courseId" = $1 
+       ORDER BY s."startTime" DESC`,
+      [req.params.courseId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Ошибка получения сессий курса:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+/**
+ * GET /api/teacher/:teacherId/attendance/report
+ * Возвращает отчёт по посещаемости с фильтрами и статистикой
+ */
+app.get('/api/teacher/:teacherId/attendance/report', async (req, res) => {
+  try {
+    const { courseId, sessionId, group, studentName, studentId, dateFrom, dateTo } = req.query;
+    
+    // Базовый запрос (исправлен под реальную схему БД)
+    let query = `
+      SELECT 
+        a.id as "attendanceId",
+        a."studentId",
+        a."sessionId",
+        a."joinedAt" as "joinTime",
+        s."full_name" as "studentName",
+        s."group",
+        c.title as "courseTitle",
+        c.id as "courseId",
+        sess."startTime" as "sessionDate",
+        sess."endTime",
+        'Присутствовал' as "status"
+      FROM "Attendance" a
+      JOIN "Student" s ON a."studentId" = s.id
+      JOIN "Session" sess ON a."sessionId" = sess.id
+      JOIN "Course" c ON sess."courseId" = c.id
+      WHERE c."teacherId" = $1
+    `;
+    
+    const params = [req.params.teacherId];
+    let paramIndex = 2;
+    
+    // Добавляем фильтры
+    if (courseId) {
+      query += ` AND c.id = $${paramIndex}`;
+      params.push(courseId);
+      paramIndex++;
+    }
+    
+    if (sessionId) {
+      query += ` AND a."sessionId" = $${paramIndex}`;
+      params.push(sessionId);
+      paramIndex++;
+    }
+    
+    if (group) {
+      query += ` AND s."group" ILIKE $${paramIndex}`;
+      params.push(`%${group}%`);
+      paramIndex++;
+    }
+    
+    if (studentName) {
+      query += ` AND s."full_name" ILIKE $${paramIndex}`;
+      params.push(`%${studentName}%`);
+      paramIndex++;
+    }
+    
+    if (studentId) {
+      query += ` AND a."studentId" = $${paramIndex}`;
+      params.push(studentId);
+      paramIndex++;
+    }
+    
+    if (dateFrom) {
+      query += ` AND sess."startTime" >= $${paramIndex}`;
+      params.push(dateFrom);
+      paramIndex++;
+    }
+    
+    if (dateTo) {
+      query += ` AND sess."startTime" <= $${paramIndex}`;
+      params.push(dateTo);
+      paramIndex++;
+    }
+    
+    query += ` ORDER BY a."joinedAt" DESC`;
+    
+    const result = await pool.query(query, params);
+    
+    // Получаем статистику
+    const statsQuery = `
+      SELECT 
+        COUNT(DISTINCT a."studentId") as "totalStudents",
+        COUNT(DISTINCT a."sessionId") as "totalSessions",
+        COUNT(DISTINCT s."group") as "uniqueGroups"
+      FROM "Attendance" a
+      JOIN "Student" s ON a."studentId" = s.id
+      JOIN "Session" sess ON a."sessionId" = sess.id
+      JOIN "Course" c ON sess."courseId" = c.id
+      WHERE c."teacherId" = $1
+    `;
+    
+    const statsResult = await pool.query(statsQuery, [req.params.teacherId]);
+    const stats = statsResult.rows[0];
+    
+    // Считаем среднюю посещаемость
+    const totalStudentsInCourses = await pool.query(
+      `SELECT COUNT(DISTINCT s.id) as "count"
+       FROM "Student" s
+       JOIN "Attendance" a ON a."studentId" = s.id
+       JOIN "Session" sess ON a."sessionId" = sess.id
+       JOIN "Course" c ON sess."courseId" = c.id
+       WHERE c."teacherId" = $1`,
+      [req.params.teacherId]
+    );
+    
+    const totalStudents = parseInt(totalStudentsInCourses.rows[0].count) || 1;
+    const averageAttendance = stats.totalStudents > 0 
+      ? Math.round((stats.totalStudents / totalStudents) * 100) 
+      : 0;
+    
+    res.json({
+      attendance: result.rows,
+      stats: {
+        totalStudents: parseInt(stats.totalStudents) || 0,
+        totalSessions: parseInt(stats.totalSessions) || 0,
+        averageAttendance: averageAttendance,
+        uniqueGroups: parseInt(stats.uniqueGroups) || 0,
+        attendanceByCourse: []
+      }
+    });
+  } catch (err) {
+    console.error('Ошибка получения отчёта по посещаемости:', err);
+    res.status(500).json({ error: 'Ошибка сервера', details: err.message });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /**
   GET /api/teacher/:teacherId/courses
@@ -299,22 +475,168 @@ app.post('/api/teacher/courses/create', async (req, res) => {
   POST /api/teacher/sessions/create
   Создает новую активную сессию для курса
   
-  Тело запроса: { courseId }
- созданный объект Session с isActive = true
+  Тело запроса: { courseId, description }
+  созданный объект Session с isActive = true
  */
 app.post('/api/teacher/sessions/create', async (req, res) => {
-  const { courseId } = req.body;
+  const { courseId, description } = req.body; // ДОБАВЛЯЕМ description
   try {
     const result = await pool.query(
-      'INSERT INTO "Session" ("courseId", "isActive", "startTime") VALUES ($1, true, NOW()) RETURNING *',
-      [courseId]
+      // ДОБАВЛЯЕМ description в запрос
+      'INSERT INTO "Session" ("courseId", "isActive", "startTime", "description") VALUES ($1, true, NOW(), $2) RETURNING *',
+      [courseId, description || null] // Используем null, если description не передан
     );
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('Ошибка:', err);
+    console.error('Ошибка создания сессии:', err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+// В эндпоинте POST /api/teacher/sessions/schedule
+app.post('/api/teacher/sessions/schedule', async (req, res) => {
+  const { teacherId, courseId, title, description, scheduledStart, duration } = req.body;
+  try {
+    // scheduledStart уже должен быть в ISO формате (UTC)
+    // Просто используем его как есть
+    const result = await pool.query(
+      `INSERT INTO "ScheduledSession" 
+       ("teacherId", "courseId", "title", "description", "scheduledStart", "duration", "isActive") 
+       VALUES ($1, $2, $3, $4, $5, $6, false) 
+       RETURNING *`,
+      [teacherId, courseId, title, description, scheduledStart, duration]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Ошибка планирования сессии:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// В эндпоинте GET /api/teacher/:teacherId/sessions/scheduled
+app.get('/api/teacher/:teacherId/sessions/scheduled', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT ss.*, c.title as "courseTitle" 
+       FROM "ScheduledSession" ss 
+       JOIN "Course" c ON ss."courseId" = c.id 
+       WHERE ss."teacherId" = $1 AND ss."isActive" = false
+       ORDER BY ss."scheduledStart" ASC`,
+      [req.params.teacherId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Ошибка получения запланированных сессий:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+/**
+ * Удаление запланированной сессии
+ * DELETE /api/teacher/sessions/scheduled/:sessionId
+ */
+app.delete('/api/teacher/sessions/scheduled/:sessionId', async (req, res) => {
+  try {
+    await pool.query(
+      'DELETE FROM "ScheduledSession" WHERE id = $1',
+      [req.params.sessionId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Ошибка удаления запланированной сессии:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+/**
+ * Автоматический запуск запланированной сессии
+ * POST /api/teacher/sessions/start-scheduled
+ */
+app.post('/api/teacher/sessions/start-scheduled', async (req, res) => {
+  const { sessionId } = req.body;
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    // Получаем информацию о запланированной сессии
+    const scheduled = await client.query(
+      'SELECT * FROM "ScheduledSession" WHERE id = $1',
+      [sessionId]
+    );
+    
+    if (scheduled.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Сессия не найдена' });
+    }
+    
+    const session = scheduled.rows[0];
+    
+    // Создаем активную сессию
+    const activeSession = await client.query(
+      'INSERT INTO "Session" ("courseId", "isActive", "startTime", "description") VALUES ($1, true, NOW(), $2) RETURNING *',
+      [session.courseId, session.description || session.title]
+    );
+    
+    // Помечаем запланированную сессию как активную (или удаляем)
+    await client.query(
+      'UPDATE "ScheduledSession" SET "isActive" = true WHERE id = $1',
+      [sessionId]
+    );
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      session: activeSession.rows[0],
+      message: 'Сессия успешно запущена'
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Ошибка запуска запланированной сессии:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  } finally {
+    client.release();
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /**
  Получение активных сессий преподавателя
@@ -774,6 +1096,146 @@ app.post('/api/audio/:recordingId/transcribe', async (req, res) => {
       error: 'Ошибка транскрибирования',
       details: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
+  }
+});
+
+/**
+ * Транскрибация фрагмента аудио (для реального времени)
+ * POST /api/audio/transcribe-chunk
+ */
+app.post('/api/audio/transcribe-chunk', upload.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Файл не загружен' });
+    }
+
+    console.log('Фрагмент:', {
+      filename: req.file.filename,
+      size: req.file.size,
+      mimetype: req.file.mimetype
+    });
+
+    const filePath = req.file.path;
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(500).json({ error: 'Файл не найден' });
+    }
+
+    const formData = new FormData();
+    formData.append('audio', fs.createReadStream(filePath), {
+      filename: req.file.filename,
+      contentType: req.file.mimetype
+    });
+
+    const response = await axios.post('http://localhost:5000/transcribe-chunk', formData, {
+      headers: formData.getHeaders(),
+      timeout: 30000
+    });
+
+    // Удаляем файл
+    fs.unlinkSync(filePath);
+
+    if (response.data?.text) {
+      res.json({
+        success: true,
+        text: response.data.text.trim(),
+        processingTime: response.data.processing_time
+      });
+    } else {
+      res.json({ success: true, text: '' });
+    }
+  } catch (err) {
+    console.error('❌ Ошибка:', err.message);
+    
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Ошибка транскрибации',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * Улучшение транскрипции через GPT
+ * POST /api/enhance-transcription
+ */
+app.post('/api/enhance-transcription', async (req, res) => {
+  try {
+    const { text, action } = req.body;
+    
+    if (!text) {
+      return res.status(400).json({ error: 'Текст не предоставлен' });
+    }
+
+    console.log('Улучшение текста:', { action, length: text.length });
+
+    // Отправляем запрос на Flask сервер с GPT
+    const response = await axios.post('http://localhost:5000/enhance-transcription', {
+      text: text,
+      action: action
+    }, {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      timeout: 60000 // 60 секунд таймаут
+    });
+
+    res.json(response.data);
+    
+  } catch (err) {
+    console.error('Ошибка улучшения текста:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Ошибка улучшения текста',
+      details: err.message
+    });
+  }
+});
+
+
+/**
+Регистрация преподавателя
+POST /api/teacher/register
+Создает нового преподавателя
+Тело запроса: { id, mail, email }
+Ответ: объект Teacher
+*/
+app.post('/api/teacher/register', async (req, res) => {
+  const { id, mail, email } = req.body;
+  try {
+    const result = await pool.query(
+      'INSERT INTO "Teacher" (id, mail, email) VALUES ($1, $2, $3) RETURNING *',
+      [id, mail, email]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Ошибка регистрации преподавателя:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+/**
+Регистрация студента
+POST /api/student/register
+Создает нового студента
+Тело запроса: { name, group }
+Ответ: объект Student
+*/
+app.post('/api/student/register', async (req, res) => {
+  const { name, group } = req.body;
+  try {
+    const result = await pool.query(
+      'INSERT INTO "Student" ("full_name", "group") VALUES ($1, $2) RETURNING *',
+      [name, group]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Ошибка регистрации студента:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
 
@@ -1570,6 +2032,19 @@ app.get('/api/sessions/:sessionId/info', (req, res) => {
   res.json(info);
 });
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 /**
  * GET /api/server/stats
  * Статистика сервера:
@@ -1630,7 +2105,33 @@ app.get('/api/health', (req, res) => {
     audioFilesCount: fs.readdirSync(audioDir).length
   });
 });
-
+/**
+ * Получение аудиозаписей доступных студенту
+ * GET /api/audio/student/:studentId
+ * Возвращает все аудиозаписи из сессий, которые посетил студент
+ * 
+ * Параметры URL: studentId
+ * Ответ: массив объектов AudioRecording
+ */
+app.get('/api/audio/student/:studentId', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT ar.*, s."startTime" as "sessionDate", c.title as "courseTitle", t.name as "teacherName"
+       FROM "AudioRecording" ar
+       JOIN "Session" s ON ar."sessionId" = s.id
+       JOIN "Course" c ON s."courseId" = c.id
+       JOIN "Teacher" t ON c."teacherId" = t.id
+       JOIN "Attendance" a ON a."sessionId" = s.id
+       WHERE a."studentId" = $1
+       ORDER BY ar."createdAt" DESC`,
+      [req.params.studentId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Ошибка получения аудиозаписей студента:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
 // Запуск сервера
 server.listen(PORT, '0.0.0.0', () => {
 
@@ -1645,7 +2146,7 @@ server.listen(PORT, '0.0.0.0', () => {
   Object.keys(networkInterfaces).forEach(interfaceName => {
     networkInterfaces[interfaceName].forEach(interface => {
       if (interface.family === 'IPv4' && !interface.internal) {
-        console.log(`${interfaceName}: ${protocol}://${interface.address}:${PORT}`);
+        console.log(`${interfaceName}: https://${interface.address}:${PORT}`);
       }
     });
   });

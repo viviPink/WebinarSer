@@ -10,6 +10,8 @@ const StudentDashboard = ({ student, onLogout, onEnterWebinar }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [isJoined, setIsJoined] = useState(false);
+  const [recordings, setRecordings] = useState([]);
+  const [loadingRecordings, setLoadingRecordings] = useState(false);
 
   const loadSessions = async () => {
     try {
@@ -22,6 +24,24 @@ const StudentDashboard = ({ student, onLogout, onEnterWebinar }) => {
     } catch (err) {
       console.error('Ошибка загрузки сессий:', err);
       setError('Не удалось загрузить сессии');
+    }
+  };
+
+  const loadRecordings = async () => {
+    if (!student?.id) return;
+    
+    setLoadingRecordings(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/audio/student/${student.id}`);
+      if (!response.ok) {
+        throw new Error('Ошибка загрузки записей');
+      }
+      const data = await response.json();
+      setRecordings(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Ошибка загрузки записей:', err);
+    } finally {
+      setLoadingRecordings(false);
     }
   };
 
@@ -55,6 +75,7 @@ const StudentDashboard = ({ student, onLogout, onEnterWebinar }) => {
         if (session) {
           setCurrentSession(session);
           setIsJoined(true);
+          onEnterWebinar(selectedSession);
         }
       }
     } catch (err) {
@@ -65,29 +86,52 @@ const StudentDashboard = ({ student, onLogout, onEnterWebinar }) => {
     }
   };
 
+  const formatTime = (seconds) => {
+    if (!seconds) return '00:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const playRecording = (filePath) => {
+    const audioUrl = `${API_BASE_URL}${filePath}`;
+    const audio = new Audio(audioUrl);
+    audio.play().catch(err => console.error('Ошибка воспроизведения:', err));
+  };
+
   useEffect(() => {
     loadSessions();
     const interval = setInterval(loadSessions, 15000);
     return () => clearInterval(interval);
   }, []);
 
-  const props = {
-    student,
-    onLogout,
-    onEnterWebinar,
-    sessions,
-    selectedSession,
-    currentSession,
-    error,
-    loading,
-    isJoined,
-    setSelectedSession,
-    setError,        
-    handleJoinSession,
-    loadSessions
-  };
+  useEffect(() => {
+    if (student?.id) {
+      loadRecordings();
+    }
+  }, [student]);
 
-  return <StudentDashboardView {...props} />;
+  return (
+    <StudentDashboardView
+      student={student}
+      onLogout={onLogout}
+      onEnterWebinar={onEnterWebinar}
+      sessions={sessions}
+      selectedSession={selectedSession}
+      currentSession={currentSession}
+      error={error}
+      loading={loading}
+      isJoined={isJoined}
+      recordings={recordings}
+      loadingRecordings={loadingRecordings}
+      formatTime={formatTime}
+      playRecording={playRecording}
+      setSelectedSession={setSelectedSession}
+      setError={setError}
+      handleJoinSession={handleJoinSession}
+      loadSessions={loadSessions}
+    />
+  );
 };
 
 export default StudentDashboard;

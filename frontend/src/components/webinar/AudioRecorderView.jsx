@@ -2,6 +2,7 @@ import React from 'react';
 
 const AudioRecorderView = ({
   isRecording,
+  isPaused,
   recordingTime,
   showSaveModal,
   recordingTitle,
@@ -9,171 +10,315 @@ const AudioRecorderView = ({
   recordingDescription,
   setRecordingDescription,
   uploading,
-  recordingDuration,
   formatTime,
   startRecording,
+  pauseRecording,
+  resumeRecording,
   stopRecording,
   saveRecording,
-  cancelRecording
+  cancelRecording,
+  showTranscription,
+  setShowTranscription,
+  liveTranscription,
+  isTranscribing,
+  onUndoLast,
+  onClearTranscription
 }) => {
   return (
-    <>
-      <div style={{ 
-        backgroundColor: 'white', 
-        
-        padding: '20px', 
-        marginBottom: '20px', 
-        
-      }}>
-        <h4 style={{ color: '#333', marginBottom: '15px' }}>Запись аудио</h4>
-        
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
-          {isRecording ? (
-            <>
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '10px', 
-                padding: '10px', 
-                backgroundColor: '#0b0708', 
-                
-                color: 'white' 
-              }}>
-                <div style={{ 
-                  width: '12px', 
-                  height: '12px', 
-                  backgroundColor: 'white', 
-                  
-                }}></div>
-                <span>Идет запись</span>
-                <span style={{ fontWeight: 'bold' }}>{formatTime(recordingTime)}</span>
-              </div>
-              <button 
-                onClick={stopRecording}
-                style={{ 
-                  padding: '10px 20px', 
-                  backgroundColor: '#6c757d', 
-                  color: 'white'
+    <div style={{
+      backgroundColor: '#f8f9fa',
+      borderRadius: '8px',
+      padding: '15px',
+      border: '1px solid #dee2e6'
+    }}>
+      {/* Основные кнопки записи */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
+        {!isRecording ? (
+          <button
+            onClick={startRecording}
+            style={{
+              padding: '10px 20px',
+              backgroundColor: '#dc3545',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+             Начать запись
+          </button>
+        ) : (
+          <>
+            {isPaused ? (
+              <button
+                onClick={resumeRecording}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#0a0f0b',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
                 }}
               >
-                Остановить запись
+                Продолжить
               </button>
-            </>
-          ) : (
-            <button 
-              onClick={startRecording} 
-              disabled={!navigator.mediaDevices?.getUserMedia}
-              style={{ 
-                padding: '12px 24px', 
-                color: 'white', 
-                fontWeight: 'bold', 
-                fontSize: '16px' 
+            ) : (
+              <button
+                onClick={pauseRecording}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#62462b',
+                  color: '#000',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                Пауза
+              </button>
+            )}
+            
+            <button
+              onClick={stopRecording}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: '#6c757d',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: 'bold'
               }}
             >
-              Начать запись голоса
+              Остановить
             </button>
+          </>
+        )}
+        
+        <div style={{ marginLeft: 'auto', fontSize: '18px', fontWeight: 'bold' }}>
+          {isRecording && (
+            <span style={{ color: '#2b2b1c' }}>
+              {isPaused ? 'Пауза' : 'Запись'} {formatTime(recordingTime)}
+            </span>
           )}
         </div>
-
-        <style>{`
-          @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-          }
-        `}</style>
       </div>
 
-      {/* Модальное окно сохранения записи */}
-      {showSaveModal && (
-        <div style={{ 
-          position: 'fixed', 
-          top: 0, 
-          left: 0, 
-          right: 0, 
-          bottom: 0, 
-          backgroundColor: 'rgba(0,0,0,0.5)', 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
-          zIndex: 1000 
+      {/* Кнопка показа конспекта */}
+      {isRecording && (
+        <button
+          onClick={() => setShowTranscription(!showTranscription)}
+          style={{
+            padding: '8px 16px',
+            backgroundColor: showTranscription ? '#007bff' : '#6c757d',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            marginBottom: '15px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+
+          {showTranscription ? 'Скрыть конспект' : 'Показать текущий конспект'}
+          {isTranscribing && (
+            <span style={{
+              display: 'inline-block',
+              width: '12px',
+              height: '12px',
+              border: '2px solid white',
+              borderTopColor: 'transparent',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite'
+            }}></span>
+          )}
+        </button>
+      )}
+
+      {/* Окно конспекта */}
+      {showTranscription && isRecording && (
+        <div style={{
+          backgroundColor: 'white',
+          border: '1px solid #dee2e6',
+          borderRadius: '4px',
+          marginBottom: '15px',
+          overflow: 'hidden'
         }}>
-          <div style={{ 
-            backgroundColor: 'white', 
-            padding: '30px', 
-            
-            width: '500px', 
-            maxWidth: '90%', 
-            
+          <div style={{
+            padding: '10px 15px',
+            backgroundColor: '#e9ecef',
+            borderBottom: '1px solid #dee2e6',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
           }}>
-            <h3 style={{ marginTop: 0, color: '#333', marginBottom: '20px' }}>Сохранить аудиозапись</h3>
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#333' }}>
-                Название записи:
+            <h4 style={{ margin: 0, fontSize: '16px' }}>
+              Текущий конспект {isTranscribing && '(обработка...)'}
+            </h4>
+            <div style={{ display: 'flex', gap: '5px' }}>
+              <button
+                onClick={onUndoLast}
+                disabled={isTranscribing}
+                style={{
+                  padding: '4px 8px',
+                  backgroundColor: '#75736e',
+                  cursor: 'pointer',
+                  fontSize: '12px'
+                }}
+              >
+                Отменить последнее
+              </button>
+              <button
+                onClick={onClearTranscription}
+                disabled={isTranscribing}
+                style={{
+                  padding: '4px 8px',
+                  backgroundColor: '#823f45',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '12px'
+                }}
+              >
+                Очистить
+              </button>
+            </div>
+          </div>
+          <div style={{
+            padding: '15px',
+            minHeight: '150px',
+            maxHeight: '300px',
+            overflowY: 'auto',
+            backgroundColor: '#fff',
+            fontFamily: 'monospace',
+            fontSize: '14px',
+            lineHeight: '1.6',
+            whiteSpace: 'pre-wrap'
+          }}>
+            {liveTranscription ? (
+              liveTranscription.split('.').map((sentence, i) => (
+                sentence.trim() && <p key={i} style={{ margin: '0 0 8px 0' }}>{sentence.trim()}.</p>
+              ))
+            ) : (
+              <p style={{ color: '#999', textAlign: 'center', margin: '20px 0' }}>
+                {isTranscribing ? 'Обработка речи...' : 'Начните говорить, конспект появится здесь...'}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Модальное окно сохранения */}
+      {showSaveModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            padding: '30px',
+            borderRadius: '8px',
+            maxWidth: '500px',
+            width: '90%'
+          }}>
+            <h3 style={{ margin: '0 0 20px 0' }}>Сохранить запись</h3>
+            
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                Название
               </label>
-              <input 
-                type="text" 
-                value={recordingTitle} 
-                onChange={(e) => setRecordingTitle(e.target.value)} 
-                placeholder="Введите название записи" 
-                style={{ 
-                  width: '100%', 
-                  padding: '10px', 
-                  fontSize: '14px' 
-                }} 
+              <input
+                type="text"
+                value={recordingTitle}
+                onChange={(e) => setRecordingTitle(e.target.value)}
+                placeholder="Введите название записи"
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  borderRadius: '4px',
+                  border: '1px solid #ddd'
+                }}
               />
             </div>
+
             <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#333' }}>
-                Описание:
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                Описание
               </label>
-              <textarea 
-                value={recordingDescription} 
-                onChange={(e) => setRecordingDescription(e.target.value)} 
-                placeholder="Введите описание записи" 
-                rows="3" 
-                style={{ 
-                  width: '100%', 
-                  padding: '10px', 
-                  fontSize: '14px', 
-                  resize: 'vertical' 
-                }} 
+              <textarea
+                value={recordingDescription}
+                onChange={(e) => setRecordingDescription(e.target.value)}
+                placeholder="Введите описание (необязательно)"
+                rows="3"
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  borderRadius: '4px',
+                  border: '1px solid #ddd'
+                }}
               />
             </div>
-            <div style={{ marginBottom: '20px', padding: '10px', backgroundColor: '#f8f9fa', borderRadius: '4px' }}>
-              <div style={{ fontSize: '14px', color: '#666' }}><strong>Информация о записи:</strong></div>
-              <div style={{ fontSize: '14px', color: '#666', marginTop: '5px' }}>
-                Длительность: {formatTime(recordingDuration)}
-              </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button 
-                onClick={cancelRecording} 
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={cancelRecording}
                 disabled={uploading}
-                style={{ 
-                  padding: '10px 20px', 
-                  backgroundColor: '#6c757d', 
-                  color: 'white'
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: uploading ? 'not-allowed' : 'pointer'
                 }}
               >
                 Отмена
               </button>
-              <button 
-                onClick={saveRecording} 
-                disabled={uploading || !recordingTitle.trim()}
-                style={{ 
-                  padding: '10px 20px', 
-                  backgroundColor: '#e5e5e5', 
-                  color: 'white'
+              <button
+                onClick={saveRecording}
+                disabled={uploading}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: uploading ? 'not-allowed' : 'pointer',
+                  minWidth: '120px'
                 }}
               >
-                {uploading ? 'Сохранение' : 'Сохранить'}
+                {uploading ? 'Сохранение...' : 'Сохранить'}
               </button>
             </div>
           </div>
         </div>
       )}
-    </>
+
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
   );
 };
 
