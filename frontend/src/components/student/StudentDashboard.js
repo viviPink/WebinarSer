@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import StudentDashboardView from './StudentDashboardView';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://localhost:3001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://192.168.0.17:3001';
 
 const StudentDashboard = ({ student, onLogout, onEnterWebinar }) => {
   const [sessions, setSessions] = useState([]);

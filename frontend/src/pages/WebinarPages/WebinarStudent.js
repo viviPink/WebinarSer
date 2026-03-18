@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import io from 'socket.io-client';
 import WebinarStudentView from './WebinarStudentView';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://localhost:3001';
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'https://localhost:3001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://192.168.0.17:3001';
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'https://192.168.0.17:3001';
 
 const WebinarStudent = ({ sessionId, student, onExit }) => {
   const [socket, setSocket] = useState(null);

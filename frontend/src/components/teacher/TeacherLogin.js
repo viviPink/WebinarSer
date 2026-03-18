@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import TeacherLoginView from './TeacherLoginView';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://localhost:3001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://192.168.0.17:3001';
 
 const TeacherLogin = ({ setTeacher, onBack }) => {
   const [name, setName] = useState('');

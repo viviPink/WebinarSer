@@ -155,7 +155,7 @@ const SessionsCalendar = ({
       display: 'flex',
       alignItems: 'center',
       gap: '4px',
-      borderLeft: '3px solid #28a745'
+      
     },
     scheduledSession: {
       marginBottom: '4px',
@@ -166,7 +166,7 @@ const SessionsCalendar = ({
       display: 'flex',
       alignItems: 'center',
       gap: '4px',
-      borderLeft: '3px solid #ffc107'
+      
     },
     sessionTime: {
       fontSize: '10px',
@@ -258,13 +258,13 @@ const SessionsCalendar = ({
       backgroundColor: '#f8f9fa',
       borderRadius: '4px',
       alignItems: 'flex-start',
-      borderLeft: '4px solid transparent'
+      
     },
     dayViewSessionActive: {
-      borderLeftColor: '#28a745'
+      
     },
     dayViewSessionScheduled: {
-      borderLeftColor: '#ffc107'
+      
     },
     dayViewTime: {
       minWidth: '70px',
@@ -408,7 +408,7 @@ const SessionsCalendar = ({
                   style={styles.editButton}
                   title="Редактировать"
                 >
-                  ✎
+                  редактир
                 </button>
                 <button
                   onClick={(e) => {
@@ -418,7 +418,7 @@ const SessionsCalendar = ({
                   style={styles.deleteButton}
                   title="Удалить"
                 >
-                  ×
+                  удал
                 </button>
               </div>
             </div>

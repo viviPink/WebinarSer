@@ -10,6 +10,7 @@ const AudioRecorderView = ({
   recordingDescription,
   setRecordingDescription,
   uploading,
+  recordingDuration,
   formatTime,
   startRecording,
   pauseRecording,
@@ -20,9 +21,11 @@ const AudioRecorderView = ({
   showTranscription,
   setShowTranscription,
   liveTranscription,
+  timedTranscription,
   isTranscribing,
   onUndoLast,
-  onClearTranscription
+  onClearTranscription,
+  timingsCount
 }) => {
   return (
     <div style={{
@@ -49,7 +52,7 @@ const AudioRecorderView = ({
               gap: '8px'
             }}
           >
-             Начать запись
+            Начать запись
           </button>
         ) : (
           <>
@@ -128,7 +131,6 @@ const AudioRecorderView = ({
             gap: '8px'
           }}
         >
-
           {showTranscription ? 'Скрыть конспект' : 'Показать текущий конспект'}
           {isTranscribing && (
             <span style={{
@@ -161,9 +163,22 @@ const AudioRecorderView = ({
             justifyContent: 'space-between',
             alignItems: 'center'
           }}>
-            <h4 style={{ margin: 0, fontSize: '16px' }}>
-              Текущий конспект {isTranscribing && '(обработка...)'}
-            </h4>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <h4 style={{ margin: 0, fontSize: '16px' }}>
+                Конспект {isTranscribing && '(обработка...)'}
+              </h4>
+              {timingsCount > 0 && (
+                <span style={{
+                  fontSize: '12px',
+                  backgroundColor: '#28a745',
+                  color: 'white',
+                  padding: '2px 8px',
+                  borderRadius: '12px'
+                }}>
+                  {timingsCount} слов с таймингами
+                </span>
+              )}
+            </div>
             <div style={{ display: 'flex', gap: '5px' }}>
               <button
                 onClick={onUndoLast}
@@ -171,6 +186,8 @@ const AudioRecorderView = ({
                 style={{
                   padding: '4px 8px',
                   backgroundColor: '#75736e',
+                  border: 'none',
+                  borderRadius: '4px',
                   cursor: 'pointer',
                   fontSize: '12px'
                 }}
@@ -206,9 +223,34 @@ const AudioRecorderView = ({
             whiteSpace: 'pre-wrap'
           }}>
             {liveTranscription ? (
-              liveTranscription.split('.').map((sentence, i) => (
-                sentence.trim() && <p key={i} style={{ margin: '0 0 8px 0' }}>{sentence.trim()}.</p>
-              ))
+              <>
+                <div style={{ marginBottom: '10px', color: '#666', fontSize: '12px' }}>
+                  Обычный текст:
+                </div>
+                {liveTranscription.split('.').map((sentence, i) => (
+                  sentence.trim() && <p key={i} style={{ margin: '0 0 8px 0' }}>{sentence.trim()}.</p>
+                ))}
+                
+                {timedTranscription && (
+                  <>
+                    <div style={{ 
+                      marginTop: '20px', 
+                      marginBottom: '10px', 
+                      color: '#666', 
+                      fontSize: '12px',
+                      borderTop: '1px dashed #dee2e6',
+                      paddingTop: '10px'
+                    }}>
+                      Текст с таймингами:
+                    </div>
+                    <div style={{ fontSize: '13px' }}>
+                      {timedTranscription.split('\n').map((line, i) => (
+                        line && <p key={i} style={{ margin: '0 0 5px 0' }}>{line}</p>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
             ) : (
               <p style={{ color: '#999', textAlign: 'center', margin: '20px 0' }}>
                 {isTranscribing ? 'Обработка речи...' : 'Начните говорить, конспект появится здесь...'}
@@ -275,6 +317,25 @@ const AudioRecorderView = ({
                   border: '1px solid #ddd'
                 }}
               />
+            </div>
+
+            <div style={{ 
+              marginBottom: '20px',
+              padding: '10px',
+              backgroundColor: '#f8f9fa',
+              borderRadius: '4px'
+            }}>
+              <p style={{ margin: '5px 0' }}>
+                <strong>Длительность:</strong> {formatTime(recordingDuration)}
+              </p>
+              <p style={{ margin: '5px 0' }}>
+                <strong>Слов в конспекте:</strong> {liveTranscription.split(/\s+/).filter(w => w).length}
+              </p>
+              {timingsCount > 0 && (
+                <p style={{ margin: '5px 0', color: '#28a745' }}>
+                  <strong>Слов с таймингами:</strong> {timingsCount}
+                </p>
+              )}
             </div>
 
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>

@@ -3,8 +3,8 @@ import io from 'socket.io-client';
 import WebinarTeacherView from './WebinarTeacherView';
 import AudioRecorder from '../../components/webinar/AudioRecorder';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://localhost:3001';
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'https://localhost:3001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://192.168.0.17:3001';
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'https://192.168.0.17:3001';
 
 const WebinarTeacher = ({ sessionId, teacher, onExit }) => {
   const [socket, setSocket] = useState(null);

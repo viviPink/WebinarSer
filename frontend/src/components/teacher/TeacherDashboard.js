@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import TeacherDashboardView from './TeacherDashboardView';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://localhost:3001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://192.168.0.17:3001';
 
 const TeacherDashboard = ({ teacher, onLogout, onEnterWebinar }) => {
   const [courses, setCourses] = useState([]);
@@ -203,9 +203,9 @@ const TeacherDashboard = ({ teacher, onLogout, onEnterWebinar }) => {
   const handleEditScheduledSession = async (sessionData) => {
     // Здесь можно открыть модальное окно для редактирования
     // Пока просто показываем сообщение
-    alert(`Функция редактирования сессии "${sessionData.title}" в разработке`);
+    alert(`доделаю потоммммммм `);
     
-    // В будущем здесь будет вызов API для обновления
+    // В будущем здесь будет вызов API для обновления 
     console.log('Редактирование сессии:', sessionData);
   };
 

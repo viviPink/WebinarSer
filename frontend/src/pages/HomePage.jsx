@@ -156,8 +156,8 @@ const AppView = ({ setUserRole, onRegister }) => {
         }
         .decorative-circle {
           position: absolute;
-          width: 160px;
-          height: 160px;
+          width: 260px;
+          height: 260px;
           background-color: #d1d5db;
           border-radius: 50%;
           opacity: 0.6;

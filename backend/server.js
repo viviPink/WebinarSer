@@ -57,6 +57,8 @@ const server = https.createServer(credentials, app); // Создаем HTTPS с�
 const uploadsDir = path.join(__dirname, 'uploads');     // Основная папка загрузок
 const audioDir = path.join(uploadsDir, 'audio');        // Папка для аудиофайлов
 
+
+
 // Создаем директории, если они не существуют 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -1197,36 +1199,28 @@ app.post('/api/enhance-transcription', async (req, res) => {
 });
 
 
-/**
-Регистрация преподавателя
-POST /api/teacher/register
-Создает нового преподавателя
-Тело запроса: { id, mail, email }
-Ответ: объект Teacher
-*/
+// Регистрация преподавателя
 app.post('/api/teacher/register', async (req, res) => {
-  const { id, mail, email } = req.body;
+  const { name, email } = req.body; // Исправлено: вместо id, mail, email
+  console.log('Регистрация преподавателя:', { name, email });
+  
   try {
     const result = await pool.query(
-      'INSERT INTO "Teacher" (id, mail, email) VALUES ($1, $2, $3) RETURNING *',
-      [id, mail, email]
+      'INSERT INTO "Teacher" (name, email) VALUES ($1, $2) RETURNING *',
+      [name, email]
     );
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Ошибка регистрации преподавателя:', err);
-    res.status(500).json({ error: 'Ошибка сервера' });
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
-Регистрация студента
-POST /api/student/register
-Создает нового студента
-Тело запроса: { name, group }
-Ответ: объект Student
-*/
+// Регистрация студента (уже правильно)
 app.post('/api/student/register', async (req, res) => {
   const { name, group } = req.body;
+  console.log('Регистрация студента:', { name, group });
+  
   try {
     const result = await pool.query(
       'INSERT INTO "Student" ("full_name", "group") VALUES ($1, $2) RETURNING *',
@@ -1235,7 +1229,7 @@ app.post('/api/student/register', async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Ошибка регистрации студента:', err);
-    res.status(500).json({ error: 'Ошибка сервера' });
+    res.status(500).json({ error: err.message });
   }
 });
 
