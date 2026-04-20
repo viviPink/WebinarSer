@@ -117,34 +117,34 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
 teacherPeerConnectionsRef — Map<studentSocketId, RTCPeerConnection>. Каждый студент получает отдельное P2P соединение. Используется useRef чтобы избежать лишних ререндеров.
 
 ### Трансляция экрана (startTeacherScreenShare)
-•	1. Вызов navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }) — браузер показывает диалог выбора экрана
-•	2. Вызов navigator.mediaDevices.getUserMedia({ audio }) — получение звука с микрофона
-•	3. Создание объединённого MediaStream из видеотрека экрана + аудиотрека микрофона
-•	4. Сохранение в activeStreamRef.current — единая точка для всех P2P соединений
-•	5. Вызов _broadcastActiveStreamToStudents() — рассылка потока всем студентам
-•	6. При остановке экранной трансляции: screenStream.getVideoTracks()[0].onended — автоматически вызывает stopTeacherScreenShare()
+- Вызов navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }) — браузер показывает диалог выбора экрана
+- Вызов navigator.mediaDevices.getUserMedia({ audio }) — получение звука с микрофона
+- Создание объединённого MediaStream из видеотрека экрана + аудиотрека микрофона
+- Сохранение в activeStreamRef.current — единая точка для всех P2P соединений
+- Вызов _broadcastActiveStreamToStudents() — рассылка потока всем студентам
+- При остановке экранной трансляции: screenStream.getVideoTracks()[0].onended — автоматически вызывает stopTeacherScreenShare()
 
 
 ### Функция _broadcastActiveStreamToStudents()
 Для каждого студента из studentsForMonitoring:
-•	Создаётся новый RTCPeerConnection с STUN серверами Google: stun:stun.l.google.com:19302
-•	Все треки из activeStreamRef добавляются: stream.getTracks().forEach(track => pc.addTrack(track, stream))
-•	Создаётся offer: pc.createOffer({ offerToReceiveVideo: false, offerToReceiveAudio: false }) — false, потому что преподаватель только отправляет
-•	Offer сохраняется как localDescription: await pc.setLocalDescription(offer)
-•	Через Socket.IO отправляется студенту: teacher_send_offer_to_students
-•	Настраивается onicecandidate — кандидаты ICE отправляются студенту через webrtc_ice_candidate
+- Создаётся новый RTCPeerConnection с STUN серверами Google: stun:stun.l.google.com:19302
+-	Все треки из activeStreamRef добавляются: stream.getTracks().forEach(track => pc.addTrack(track, stream))
+-	Создаётся offer: pc.createOffer({ offerToReceiveVideo: false, offerToReceiveAudio: false }) — false, потому что преподаватель только отправляет
+-	Offer сохраняется как localDescription: await pc.setLocalDescription(offer)
+-	Через Socket.IO отправляется студенту: teacher_send_offer_to_students
+-	Настраивается onicecandidate — кандидаты ICE отправляются студенту через webrtc_ice_candidate
 
 
 ### Код студента находится в WebinarStudent.js. Студент является ответчиком (Answerer) для потока преподавателя и инициатором (Offerer) для своей камеры/экрана.
  Получение потока от преподавателя
 Событие teacher_webrtc_offer → handleTeacherWebrtcOffer:
-•	1. Создаётся новый RTCPeerConnection с теми же STUN серверами
-•	2. pc.ontrack — получение треков: setTeacherScreenStream(event.streams[0])
-•	3. Установка remoteDescription: await pc.setRemoteDescription(new RTCSessionDescription(sdp))
-•	4. Создание answer: const answer = await pc.createAnswer()
-•	5. Установка localDescription: await pc.setLocalDescription(answer)
-•	6. Отправка answer преподавателю через Socket.IO: webrtc_answer
-•	7. В useEffect: когда teacherScreenStream обновляется, поток привязывается к teacherScreenVideoRef.current.srcObject
+- Создаётся новый RTCPeerConnection с теми же STUN серверами
+- pc.ontrack — получение треков: setTeacherScreenStream(event.streams[0])
+- Установка remoteDescription: await pc.setRemoteDescription(new RTCSessionDescription(sdp))
+- Создание answer: const answer = await pc.createAnswer()
+- Установка localDescription: await pc.setLocalDescription(answer)
+- Отправка answer преподавателю через Socket.IO: webrtc_answer
+- В useEffect: когда teacherScreenStream обновляется, поток привязывается к teacherScreenVideoRef.current.srcObject
 
 
 Все медиафайлы хранятся на диске сервера в папке uploads/audio/. Путь к файлу сохраняется в БД в AudioRecording.filePath.
