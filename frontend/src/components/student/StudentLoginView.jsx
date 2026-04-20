@@ -3,8 +3,8 @@ import React, { useState } from 'react';
 const StudentLoginView = ({
   name,
   setName,
-  group,
-  setGroup,
+  password,
+  setPassword,
   error,
   loading,
   handleLogin,
@@ -29,7 +29,6 @@ const StudentLoginView = ({
         {/* Left Side */}
         <div className="left-side">
           <div className="role-badge">
-            
             <div className="badge-text">
               <span className="badge-label">вход для</span>
               <span className="badge-role">Студент</span>
@@ -40,8 +39,6 @@ const StudentLoginView = ({
           <p className="welcome-text">
             Войдите в свой профиль, чтобы продолжить работу
           </p>
-          
-          
         </div>
 
         {/* Right Side */}
@@ -59,7 +56,7 @@ const StudentLoginView = ({
                 </svg>
                 <input
                   type="text"
-                  placeholder="Иванов И.И."
+                  placeholder="Иванов Иван Иванович"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="input-field"
@@ -71,14 +68,14 @@ const StudentLoginView = ({
               <label className="form-label">Пароль</label>
               <div className="input-wrapper">
                 <svg className="input-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                 </svg>
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="Номер зачетной книжки"
-                  value={group}
-                  onChange={(e) => setGroup(e.target.value)}
+                  placeholder="Введите пароль"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   className="input-field"
                 />
                 <button 
@@ -103,7 +100,7 @@ const StudentLoginView = ({
 
             <button 
               onClick={handleLogin}
-              disabled={!name.trim() || !group.trim() || loading}
+              disabled={!name.trim() || !password.trim() || loading}
               className="submit-button"
             >
               {loading ? 'Вход...' : 'Войти в аккаунт'}
@@ -118,7 +115,7 @@ const StudentLoginView = ({
         </div>
       </div>
 
-      <style jsx>{`
+      <style>{`
         .login-container {
           min-height: 100vh;
           background-color: #fff;
@@ -151,7 +148,7 @@ const StudentLoginView = ({
           transition: color 0.2s;
         }
         .back-button:hover {
-          color: #7B61FF;
+          color: #2563EB;
         }
         .main-content {
           display: flex;
@@ -175,16 +172,6 @@ const StudentLoginView = ({
           margin-bottom: 40px;
           width: fit-content;
           box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        }
-        .badge-icon {
-          width: 40px;
-          height: 40px;
-          background-color: #7B61FF;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 20px;
         }
         .badge-text {
           display: flex;
@@ -211,12 +198,6 @@ const StudentLoginView = ({
           line-height: 1.6;
           margin: 0;
           max-width: 400px;
-        }
-        .decorative-icon {
-          position: absolute;
-          bottom: 40px;
-          left: 60px;
-          opacity: 0.3;
         }
         .right-side {
           flex: 1;
@@ -271,8 +252,8 @@ const StudentLoginView = ({
         }
         .input-field:focus {
           outline: none;
-          border-color: #7B61FF;
-          box-shadow: 0 0 0 3px rgba(123, 97, 255, 0.1);
+          border-color: #2563EB;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
         }
         .toggle-password {
           position: absolute;

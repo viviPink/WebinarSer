@@ -1,7 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import AudioRecorderView from './AudioRecorderView';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://192.168.0.17:3001';
+const API_BASE_URL = window.location.hostname.includes('tunnel4.com')
+  ? 'https://4d46289f-50f4-4151-9e9f-4860ddd78a36.tunnel4.com'
+  : 'https://10.78.167.190:3002';
+
+const SOCKET_URL = API_BASE_URL;
+
+
 
 const AudioRecorder = ({ 
   sessionId, 
@@ -25,25 +31,19 @@ const AudioRecorder = ({
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [showTranscription, setShowTranscription] = useState(false);
   
-  // Два конспекта: обычный текст и с таймингами
-  const [plainTranscription, setPlainTranscription] = useState(''); // Простой текст
-  const [timedTranscription, setTimedTranscription] = useState(''); // Текст с таймингами
-  const [allTimings, setAllTimings] = useState([]); // Все тайминги для последующего использования
-  
+  const [plainTranscription, setPlainTranscription] = useState('');
+  const [timedTranscription, setTimedTranscription] = useState('');
+  const [allTimings, setAllTimings] = useState([]);
   const [isTranscribing, setIsTranscribing] = useState(false);
   
   const timerRef = useRef(null);
   const audioStreamRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
   const audioContextRef = useRef(null);
   const mediaStreamSourceRef = useRef(null);
   const processorRef = useRef(null);
   
-  // Храним накопленные аудиоданные для транскрибации
   const audioBufferRef = useRef([]);
   const lastProcessTimeRef = useRef(Date.now());
-  
-  // Флаг для финальной транскрипции
   const isFinalizingRef = useRef(false);
 
   const formatTime = (seconds) => {
@@ -52,7 +52,6 @@ const AudioRecorder = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Форматирование времени с миллисекундами для таймингов
   const formatTimeDetailed = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -60,10 +59,9 @@ const AudioRecorder = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
   };
 
-  // Конвертировать Float32Array в WAV
   const floatToWav = (buffer, sampleRate) => {
     const bytesPerSample = 2;
-    const format = 1; // PCM
+    const format = 1;
     const channels = 1;
     
     const dataLength = buffer.length * bytesPerSample;
@@ -107,7 +105,6 @@ const AudioRecorder = ({
     }
   };
 
-  // Функция для форматирования текста с таймингами
   const formatTimedTranscription = (timings) => {
     if (!timings || timings.length === 0) return '';
     
@@ -118,7 +115,6 @@ const AudioRecorder = ({
     timings.forEach((timing, index) => {
       currentSentence.push(timing.word);
       
-      // Добавляем тайминг в начале каждого предложения или каждые 15 слов
       const isNewSentence = index === 0 || 
                            timing.word.match(/[.!?]$/) || 
                            currentSentence.length >= 15 ||
@@ -140,7 +136,6 @@ const AudioRecorder = ({
     return result;
   };
 
-  // Функция отправки фрагмента на транскрибацию
   const transcribeAudioChunk = async (audioData, sampleRate) => {
     if (!audioData || audioData.length === 0 || isFinalizingRef.current) return;
 
@@ -149,10 +144,7 @@ const AudioRecorder = ({
       
       const wavBlob = floatToWav(audioData, sampleRate);
       
-      console.log('Отправка фрагмента, размер:', wavBlob.size, 'байт');
-      
       if (wavBlob.size < 2000) {
-        console.log('Фрагмент слишком маленький, пропускаем');
         setIsTranscribing(false);
         return;
       }
@@ -173,9 +165,6 @@ const AudioRecorder = ({
       const result = await response.json();
       
       if (result.text && result.text.trim()) {
-        console.log('Получен текст:', result.text.substring(0, 50) + '...');
-        
-        // Обновляем простой текст
         setPlainTranscription(prev => {
           const separator = prev && !prev.endsWith(' ') ? ' ' : '';
           const newText = prev + separator + result.text;
@@ -183,17 +172,11 @@ const AudioRecorder = ({
           return newText;
         });
         
-        // Сохраняем тайминги
         if (result.timings && result.timings.length > 0) {
-          console.log('Получены тайминги:', result.timings.length, 'слов');
-          
           setAllTimings(prev => {
             const newTimings = [...prev, ...result.timings];
-            
-            // Обновляем текст с таймингами
             const timedText = formatTimedTranscription(newTimings);
             setTimedTranscription(timedText);
-            
             return newTimings;
           });
         }
@@ -205,7 +188,6 @@ const AudioRecorder = ({
     }
   };
 
-  // Функция для финальной транскрипции всех оставшихся данных
   const finalizeTranscription = async () => {
     if (!audioContextRef.current || audioBufferRef.current.length === 0) {
       return;
@@ -214,8 +196,6 @@ const AudioRecorder = ({
     isFinalizingRef.current = true;
     
     try {
-      console.log('Финальная транскрипция, размер буфера:', audioBufferRef.current.length);
-      
       const audioData = new Float32Array(audioBufferRef.current);
       await transcribeAudioChunk(audioData, audioContextRef.current.sampleRate);
       audioBufferRef.current = [];
@@ -274,15 +254,9 @@ const AudioRecorder = ({
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
       
-      // Сбрасываем все данные ТОЛЬКО при новом старте
       audioBufferRef.current = [];
       lastProcessTimeRef.current = Date.now();
       isFinalizingRef.current = false;
-      
-      // НЕ очищаем существующие транскрипции при новом старте
-      // setAllTimings([]);
-      // setPlainTranscription('');
-      // setTimedTranscription('');
       
       processor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
@@ -349,10 +323,8 @@ const AudioRecorder = ({
   const stopRecording = async () => {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       
-      // Делаем финальную транскрипцию оставшихся данных
       await finalizeTranscription();
       
-      // Даем время на завершение последнего запроса
       await new Promise(resolve => setTimeout(resolve, 500));
       
       mediaRecorder.stop();
@@ -387,8 +359,6 @@ const AudioRecorder = ({
       }
 
       onRecordingStopped();
-      
-      // НЕ очищаем транскрипции здесь - они останутся для сохранения
     }
   };
 
@@ -409,13 +379,11 @@ const AudioRecorder = ({
       formData.append('description', recordingDescription);
       formData.append('duration', recordingDuration);
       
-      // Сохраняем оба конспекта
       formData.append('transcription', plainTranscription);
-      formData.append('timed_transcription', timedTranscription);
+      formData.append('timedTranscription', timedTranscription);
       
       if (allTimings.length > 0) {
         formData.append('timings', JSON.stringify(allTimings));
-        console.log(`Добавлено ${allTimings.length} таймингов к сохранению`);
       }
 
       const response = await fetch(`${API_BASE_URL}/api/audio/upload`, {
@@ -423,13 +391,15 @@ const AudioRecorder = ({
         body: formData
       });
 
-      if (!response.ok) throw new Error('Ошибка загрузки файла');
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Ошибка загрузки файла: ${response.status} ${errorText}`);
+      }
 
       const result = await response.json();
 
       setShowSaveModal(false);
       
-      // Очищаем ТОЛЬКО после успешного сохранения
       setRecordingTitle('');
       setRecordingDescription('');
       setAudioChunks([]);
@@ -452,7 +422,6 @@ const AudioRecorder = ({
 
   const cancelRecording = () => {
     setShowSaveModal(false);
-    // При отмене НЕ очищаем транскрипции - они остаются
     setRecordingTitle('');
     setRecordingDescription('');
     setAudioChunks([]);
@@ -469,7 +438,6 @@ const AudioRecorder = ({
       return newText;
     });
     
-    // Также удаляем последние тайминги
     if (allTimings.length > 0) {
       setAllTimings(prev => {
         const newTimings = prev.slice(0, Math.max(0, prev.length - 10));

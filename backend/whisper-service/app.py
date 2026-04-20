@@ -7,23 +7,29 @@ import traceback
 import time
 import sys
 import requests
+import subprocess
 
 app = Flask(__name__)
-CORS(app, origins=["https://192.168.0.17:3001", "https://192.168.0.17:3000", "https://192.168.0.17:3001", "https://192.168.0.17:3000"])
 
+# Разрешаем все источники для тестирования (CORS)
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "Accept"],
+        "expose_headers": ["Content-Type"],
+        "supports_credentials": True
+    }
+})
 
 # Конфигурация для LM Studio
-LM_STUDIO_URL = "http://192.168.56.1:1234"  # Адрес LM Studio
-LM_STUDIO_MODEL = "qwen2.5-7b-instruct-1m"  
+LM_STUDIO_URL = "http://10.31.119.190:1234"  # Адрес LM Studio
+LM_STUDIO_MODEL = "qwen2.5-7b-instruct-1m"  # Модель для суммаризации
 
-# Проверка наличия ffmpeg 
-import subprocess
-try:
-    subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-    print("[OK] ffmpeg найден")
-except:
-    print("[ERROR] ffmpeg не найден! Whisper может не работать")
-    print("Установите ffmpeg: sudo apt-get install ffmpeg")
+# Проверка наличия ffmpeg
+subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+print("[OK] ffmpeg найден")
+
 
 print("Загрузка модели Whisper...")
 sys.stdout.flush()
@@ -41,6 +47,8 @@ chunk_counter = 0
 total_chunks_processed = 0
 
 print("="*60 + "\n")
+
+# ========== ЭНДПОИНТЫ WHISPER ==========
 
 @app.route('/health', methods=['GET', 'OPTIONS'])
 def health_check():
@@ -236,20 +244,24 @@ def summarize_text():
     if request.method == 'OPTIONS':
         return '', 200
     
-    data = request.json
-    text = data.get('text', '')
-    action = data.get('action', 'summary')  # summary, bullet_points, structure, questions
-    
-    if not text:
-        return jsonify({"error": "Текст не предоставлен"}), 400
-    
-    print(f"\n[SUMMARIZE] СОЗДАНИЕ КОНСПЕКТА")
-    print(f"   Длина текста: {len(text)} символов")
-    print(f"   Действие: {action}")
-    
-    # Разные промпты для разных действий
-    prompts = {
-        'summary': f"""Составь краткий структурированный конспект на русском языке по следующему тексту. 
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "Нет данных в запросе"}), 400
+            
+        text = data.get('text', '')
+        action = data.get('action', 'summary')
+        
+        if not text:
+            return jsonify({"error": "Текст не предоставлен"}), 400
+        
+        print(f"\n[SUMMARIZE] СОЗДАНИЕ КОНСПЕКТА")
+        print(f"   Длина текста: {len(text)} символов")
+        print(f"   Действие: {action}")
+        
+        # Разные промпты для разных действий
+        prompts = {
+            'summary': f"""Составь краткий структурированный конспект на русском языке по следующему тексту. 
 Выдели основные тезисы, ключевые идеи и важные детали.
 Используй заголовки и списки для лучшей структуры.
 
@@ -258,7 +270,7 @@ def summarize_text():
 
 Конспект:""",
 
-        'bullet_points': f"""Преобразуй следующий текст в список основных тезисов на русском языке.
+            'bullet_points': f"""Преобразуй следующий текст в список основных тезисов на русском языке.
 Каждый тезис начинай с новой строки.
 Выдели только самое важное, без воды.
 
@@ -267,7 +279,7 @@ def summarize_text():
 
 Тезисы:""",
 
-        'structure': f"""Проанализируй следующий текст и создай его структуру с заголовками и подзаголовками на русском языке.
+            'structure': f"""Проанализируй следующий текст и создай его структуру с заголовками и подзаголовками на русском языке.
 Используй формат:
 Главная тема
 Подтема 1
@@ -280,22 +292,41 @@ def summarize_text():
 
 Структура:""",
 
-        'questions': f"""На основе текста составь 5-10 вопросов для проверки понимания материала.
+            'questions': f"""На основе текста составь 5-10 вопросов для проверки понимания материала.
 Вопросы должны быть на русском языке и охватывать основные идеи текста.
 
 Текст:
 {text}
 
 Вопросы:"""
-    }
-    
-    prompt = prompts.get(action, prompts['summary'])
-    
-    try:
-        # Полный URL эндпоинта
-        api_url = f"{LM_STUDIO_URL}/v1/chat/completions"
+        }
         
-        # Правильный формат запроса (OpenAI-style)
+        prompt = prompts.get(action, prompts['summary'])
+        
+        # Проверяем доступность LM Studio
+        try:
+            models_response = requests.get(f"{LM_STUDIO_URL}/v1/models", timeout=3)
+            if models_response.status_code != 200:
+                print(f"   [ERROR] LM Studio отвечает с ошибкой: {models_response.status_code}")
+                return jsonify({
+                    "success": False,
+                    "error": "LM Studio не отвечает. Проверьте что он запущен на порту 1234"
+                }), 503
+        except requests.exceptions.ConnectionError:
+            print("   [ERROR] Не удалось подключиться к LM Studio")
+            return jsonify({
+                "success": False,
+                "error": "LM Studio не запущен. Запустите LM Studio на порту 1234"
+            }), 503
+        except Exception as e:
+            print(f"   [ERROR] Ошибка проверки LM Studio: {e}")
+            return jsonify({
+                "success": False,
+                "error": f"Ошибка подключения к LM Studio: {str(e)}"
+            }), 503
+        
+        # Отправляем запрос к LM Studio
+        api_url = f"{LM_STUDIO_URL}/v1/chat/completions"
         payload = {
             "model": LM_STUDIO_MODEL,
             "messages": [
@@ -305,18 +336,21 @@ def summarize_text():
                 }
             ],
             "temperature": 0.3,
-            "max_tokens": 2048
+            "max_tokens": 2048,
+            "stream": False
         }
+        
+        print(f"   [API] Отправка запроса к {api_url}")
+        print(f"   [API] Модель: {LM_STUDIO_MODEL}")
         
         start_time = time.time()
         
-        print(f"   [API] Отправка запроса к {api_url}")
         response = requests.post(api_url, json=payload, timeout=120)
         
         if response.status_code == 200:
             result = response.json()
             
-            # Правильное извлечение ответа
+            # Извлечение ответа
             if 'choices' in result and len(result['choices']) > 0:
                 summary = result['choices'][0]['message']['content'].strip()
                 
@@ -332,18 +366,31 @@ def summarize_text():
                 })
             else:
                 print(f"   [ERROR] Неожиданный формат ответа: {result}")
-                return jsonify({"error": "Неожиданный формат ответа от LM Studio"}), 500
+                return jsonify({
+                    "success": False,
+                    "error": "Неожиданный формат ответа от LM Studio"
+                }), 500
         else:
-            print(f"   [ERROR] Ошибка LM Studio: {response.status_code} - {response.text}")
-            return jsonify({"error": f"Ошибка LM Studio: {response.status_code}"}), 500
+            print(f"   [ERROR] Ошибка LM Studio: {response.status_code}")
+            print(f"   [ERROR] Ответ: {response.text}")
+            return jsonify({
+                "success": False,
+                "error": f"Ошибка LM Studio: {response.status_code}"
+            }), 500
             
-    except requests.exceptions.ConnectionError:
-        print("   [ERROR] Ошибка подключения к LM Studio")
-        return jsonify({"error": "LM Studio не запущена или недоступна"}), 503
+    except requests.exceptions.Timeout:
+        print("   [ERROR] Таймаут при запросе к LM Studio")
+        return jsonify({
+            "success": False,
+            "error": "Превышено время ожидания ответа от LM Studio"
+        }), 504
     except Exception as e:
         print(f"   [ERROR] Ошибка: {str(e)}")
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
 
 @app.route('/summarize/status', methods=['GET', 'OPTIONS'])
 def summarize_status():
@@ -352,44 +399,61 @@ def summarize_status():
         return '', 200
     
     try:
-        # Используем правильный IP и эндпоинт
+        print(f"[STATUS] Проверка LM Studio: {LM_STUDIO_URL}/v1/models")
         response = requests.get(f"{LM_STUDIO_URL}/v1/models", timeout=2)
+        
         if response.status_code == 200:
+            models = response.json()
+            available_models = models.get('data', [])
+            model_names = [m.get('id', 'unknown') for m in available_models]
+            
+            print(f"[STATUS] LM Studio доступна, модели: {model_names}")
             return jsonify({
                 "available": True,
                 "model": LM_STUDIO_MODEL,
-                "message": "LM Studio доступна"
+                "available_models": model_names,
+                "message": f"LM Studio доступна, найдено моделей: {len(available_models)}"
             })
         else:
+            print(f"[STATUS] LM Studio отвечает с ошибкой: {response.status_code}")
             return jsonify({
                 "available": False,
                 "message": f"LM Studio отвечает с ошибкой: {response.status_code}"
             })
+            
     except requests.exceptions.ConnectionError:
+        print("[STATUS] LM Studio не запущена или недоступна")
         return jsonify({
             "available": False,
-            "message": "LM Studio не запущена или недоступна"
+            "message": "LM Studio не запущена. Запустите LM Studio на порту 1234"
+        })
+    except requests.exceptions.Timeout:
+        print("[STATUS] Таймаут при проверке LM Studio")
+        return jsonify({
+            "available": False,
+            "message": "Превышено время ожидания ответа от LM Studio"
         })
     except Exception as e:
+        print(f"[STATUS] Ошибка проверки: {str(e)}")
         return jsonify({
             "available": False,
             "message": f"Ошибка проверки: {str(e)}"
         })
 
 if __name__ == '__main__':
-    
+    print("="*60)
     print("WHISPER СЕРВЕР ЗАПУЩЕН")
-    
+    print("="*60)
     print("Эндпоинты:")
     print("   • POST /transcribe        - полная транскрибация")
     print("   • POST /transcribe-chunk  - фрагменты (реальное время)")
     print("   • POST /summarize         - создание конспекта через LM Studio")
     print("   • GET  /summarize/status  - проверка статуса LM Studio")
-    print("   • GET  /health            - проверка статуса")
+    print("   • GET  /health            - проверка статуса сервера")
     print("\nПараметры:")
-    print("   • Модель Whisper: base")
-    print("   • LM Studio модель: qwen2.5-7b-instruct-1m")
-    print("   • LM Studio URL: " + LM_STUDIO_URL)
+    print(f"   • Модель Whisper: base")
+    print(f"   • LM Studio модель: {LM_STUDIO_MODEL}")
+    print(f"   • LM Studio URL: {LM_STUDIO_URL}")
     print("   • Реальное время: ДА (каждые 10 сек)")
     print("   • Тайминги слов: ДА")
     print("   • Язык: русский")

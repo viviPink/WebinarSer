@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+const API_BASE_URL = window.location.hostname.includes('tunnel4.com')
+  ? 'https://4d46289f-50f4-4151-9e9f-4860ddd78a36.tunnel4.com'
+  : 'https://10.121.104.190:3002';
+
+const SOCKET_URL = API_BASE_URL;
+
+
 const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
   const [transcription, setTranscription] = useState('');
   const [originalTranscription, setOriginalTranscription] = useState('');
@@ -12,7 +19,15 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
   const [charCount, setCharCount] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   
-  // Новые состояния для LM Studio
+  // Состояния для разных типов конспектов
+  const [activeTab, setActiveTab] = useState('transcription');
+  const [timedTranscription, setTimedTranscription] = useState('');
+  const [aiSummary, setAiSummary] = useState('');
+  const [aiBulletPoints, setAiBulletPoints] = useState('');
+  const [aiStructure, setAiStructure] = useState('');
+  const [aiQuestions, setAiQuestions] = useState('');
+  
+  // Состояния для улучшения текста
   const [generatingSummary, setGeneratingSummary] = useState(false);
   const [summaryAction, setSummaryAction] = useState('summary');
   const [lmStudioAvailable, setLmStudioAvailable] = useState(null);
@@ -20,31 +35,50 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
   
   const textareaRef = useRef(null);
   const audioRef = useRef(null);
-  
-  // Раздельные URL для разных сервисов
-  const NODE_API_URL = process.env.REACT_APP_NODE_API_URL || 'https://192.168.0.17:3001';
-  const FLASK_API_URL = 'http://192.168.0.17:5000';
+  const API_URL = API_BASE_URL;
 
-  // Проверка статуса LM Studio
-  const checkLmStudioStatus = async () => {
+  // Конфигурация вкладок
+  const tabs = [
+    { id: 'transcription', label: 'Обычный конспект', field: 'transcription' },
+    { id: 'timed', label: 'С таймингами', field: 'timedTranscription' },
+    { id: 'summary', label: 'Краткий конспект', field: 'aiSummary' },
+    { id: 'bulletPoints', label: 'Тезисы', field: 'aiBulletPoints' },
+    { id: 'structure', label: 'Структура', field: 'aiStructure' },
+    { id: 'questions', label: 'Вопросы', field: 'aiQuestions' }
+  ];
+
+  // Маппинг действий на вкладки
+  const actionToTab = {
+    'summary': 'summary',
+    'bullet_points': 'bulletPoints',
+    'structure': 'structure',
+    'questions': 'questions'
+  };
+
+  const checkServerStatus = async () => {
     try {
-      const response = await fetch(`${FLASK_API_URL}/summarize/status`);
+      const response = await fetch(`${API_URL}/api/health`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        mode: 'cors',
+        credentials: 'include'
+      });
       
-      if (response.status === 404) {
-        console.log('Эндпоинт summarize/status не найден');
+      if (response.ok) {
+        console.log('Сервер доступен');
+        setLmStudioAvailable(true);
+      } else {
+        console.log('Сервер вернул ошибку:', response.status);
         setLmStudioAvailable(false);
-        return;
       }
-      
-      const data = await response.json();
-      setLmStudioAvailable(data.available);
     } catch (err) {
-      console.error('Ошибка проверки статуса LM Studio:', err);
+      console.error('Ошибка проверки сервера:', err.message);
       setLmStudioAvailable(false);
     }
   };
 
-  // Получить данные записи и транскрипцию
   useEffect(() => {
     if (!recordingId) return;
     
@@ -53,17 +87,34 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
         setLoading(true);
         setError('');
         
-        const response = await fetch(`${NODE_API_URL}/api/audio/${recordingId}/transcription/edit`);
-        if (!response.ok) throw new Error('Не удалось загрузить транскрипцию');
+        const response = await fetch(`${API_URL}/api/audio/${recordingId}`);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
         
         const data = await response.json();
         
+        console.log('Получены данные:', {
+          transcription: data.transcription?.substring(0, 50),
+          timedTranscription: data.timedTranscription?.substring(0, 50),
+          aiSummary: data.aiSummary?.substring(0, 50),
+          aiBulletPoints: data.aiBulletPoints?.substring(0, 50),
+          aiStructure: data.aiStructure?.substring(0, 50),
+          aiQuestions: data.aiQuestions?.substring(0, 50)
+        });
+        
         setRecordingInfo(data);
         
-        const text = data.transcription || '';
-        setTranscription(text);
-        setOriginalTranscription(text);
-        updateCounts(text);
+        setTranscription(data.transcription || '');
+        setOriginalTranscription(data.transcription || '');
+        setTimedTranscription(data.timedTranscription || '');
+        setAiSummary(data.aiSummary || '');
+        setAiBulletPoints(data.aiBulletPoints || '');
+        setAiStructure(data.aiStructure || '');
+        setAiQuestions(data.aiQuestions || '');
+        
+        updateCounts(data.transcription || '');
         
       } catch (err) {
         console.error('Ошибка загрузки данных:', err);
@@ -74,7 +125,7 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
     };
     
     fetchData();
-    checkLmStudioStatus();
+    checkServerStatus();
     
     return () => {
       if (audioRef.current) {
@@ -82,24 +133,87 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
         audioRef.current = null;
       }
     };
-  }, [recordingId]);
+  }, [recordingId, API_URL]);
 
-  // Обновляем счетчики
   const updateCounts = (text) => {
     const words = text.trim().split(/\s+/).filter(word => word.length > 0);
     setWordCount(words.length);
     setCharCount(text.length);
   };
 
-  const handleTranscriptionChange = (e) => {
+  const handleTextChange = (e) => {
     const newText = e.target.value;
-    setTranscription(newText);
-    updateCounts(newText);
-    setChangesMade(newText !== originalTranscription);
+    
+    switch(activeTab) {
+      case 'transcription':
+        setTranscription(newText);
+        updateCounts(newText);
+        break;
+      case 'timed':
+        setTimedTranscription(newText);
+        break;
+      case 'summary':
+        setAiSummary(newText);
+        break;
+      case 'bulletPoints':
+        setAiBulletPoints(newText);
+        break;
+      case 'structure':
+        setAiStructure(newText);
+        break;
+      case 'questions':
+        setAiQuestions(newText);
+        break;
+      default:
+        break;
+    }
+    
+    setChangesMade(true);
+  };
+
+  const getCurrentText = () => {
+    switch(activeTab) {
+      case 'transcription':
+        return transcription;
+      case 'timed':
+        return timedTranscription;
+      case 'summary':
+        return aiSummary;
+      case 'bulletPoints':
+        return aiBulletPoints;
+      case 'structure':
+        return aiStructure;
+      case 'questions':
+        return aiQuestions;
+      default:
+        return transcription;
+    }
+  };
+
+  const getCurrentFieldName = () => {
+    switch(activeTab) {
+      case 'transcription':
+        return 'transcription';
+      case 'timed':
+        return 'timedTranscription';
+      case 'summary':
+        return 'aiSummary';
+      case 'bulletPoints':
+        return 'aiBulletPoints';
+      case 'structure':
+        return 'aiStructure';
+      case 'questions':
+        return 'aiQuestions';
+      default:
+        return 'transcription';
+    }
   };
 
   const handleSave = async () => {
-    if (!transcription.trim() && !window.confirm('Сохранить пустую транскрипцию?')) {
+    const currentText = getCurrentText();
+    const fieldName = getCurrentFieldName();
+    
+    if (!currentText.trim() && !window.confirm('Сохранить пустой текст?')) {
       return;
     }
     
@@ -107,33 +221,38 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
       setSaving(true);
       setError('');
       
-      const response = await fetch(`${NODE_API_URL}/api/audio/${recordingId}/transcription/edit`, {
-        method: 'PUT',
+      const response = await fetch(`${API_URL}/api/audio/${recordingId}`, {
+        method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ transcription: transcription.trim() })
+        body: JSON.stringify({ 
+          [fieldName]: currentText.trim()
+        })
       });
       
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Не удалось сохранить транскрипцию');
+        throw new Error(errorData.error || 'Не удалось сохранить');
       }
       
       const result = await response.json();
-      setOriginalTranscription(transcription.trim());
-      setChangesMade(false);
       
-      // Вызываем callback для обновления родительского компонента
-      if (onSave) {
-        onSave(recordingId, transcription.trim());
+      if (activeTab === 'transcription') {
+        setOriginalTranscription(currentText.trim());
       }
       
-      alert(result.message || 'Транскрипция успешно сохранена!');
+      setChangesMade(false);
+      
+      if (onSave) {
+        onSave(recordingId, currentText.trim(), fieldName);
+      }
+      
+      alert('Сохранено успешно!');
       
     } catch (err) {
       console.error('Ошибка сохранения:', err);
-      setError(err.message || 'Ошибка сохранения транскрипции');
+      setError(err.message || 'Ошибка сохранения');
     } finally {
       setSaving(false);
     }
@@ -152,12 +271,11 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
     if (onClose) onClose();
   };
 
-  // В функции playAudio (используем NODE_API_URL для аудиофайлов)
   const playAudio = () => {
     if (!recordingInfo?.filePath) return;
     
     if (!audioRef.current) {
-      audioRef.current = new Audio(`${NODE_API_URL}${recordingInfo.filePath}`);
+      audioRef.current = new Audio(`${API_URL}${recordingInfo.filePath}`);
       
       audioRef.current.onended = () => setIsPlaying(false);
       audioRef.current.onpause = () => setIsPlaying(false);
@@ -174,10 +292,34 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
     }
   };
 
-  // Функция генерации конспекта через LM Studio (используем FLASK_API_URL)
-  const generateSummary = async () => {
-    if (!transcription.trim()) {
-      alert('Нет текста для создания конспекта');
+  // Обработка выбора действия - автоматически переключаем вкладку
+  const handleActionChange = (e) => {
+    const newAction = e.target.value;
+    setSummaryAction(newAction);
+    
+    const targetTab = actionToTab[newAction];
+    if (targetTab) {
+      setActiveTab(targetTab);
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+        }
+      }, 100);
+    }
+  };
+
+  // Улучшение текста - берем из текущей вкладки, сохраняем в целевую
+  const enhanceText = async () => {
+    const sourceText = getCurrentText();
+    
+    if (!sourceText.trim()) {
+      alert('Нет текста для обработки. Сначала добавьте текст в текущую вкладку.');
+      return;
+    }
+    
+    const targetTabId = actionToTab[summaryAction];
+    if (!targetTabId) {
+      alert('Неизвестное действие');
       return;
     }
     
@@ -185,36 +327,138 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
     setSummaryError('');
     
     try {
-      const response = await fetch(`${FLASK_API_URL}/summarize`, {
+      const response = await fetch(`${API_URL}/api/enhance-transcription`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          text: transcription,
-          action: summaryAction
+          text: sourceText,
+          action: summaryAction,
+          recordingId: recordingId
         })
       });
       
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      
       const result = await response.json();
       
-      if (result.success) {
-        setTranscription(result.summary);
-        updateCounts(result.summary);
+      if (result.success && result.text) {
+        const improvedText = result.text;
+        
+        setActiveTab(targetTabId);
+        
+        switch(targetTabId) {
+          case 'summary':
+            setAiSummary(improvedText);
+            break;
+          case 'bulletPoints':
+            setAiBulletPoints(improvedText);
+            break;
+          case 'structure':
+            setAiStructure(improvedText);
+            break;
+          case 'questions':
+            setAiQuestions(improvedText);
+            break;
+          default:
+            break;
+        }
+        
         setChangesMade(true);
         
-        // Прокрутка вверх, чтобы увидеть результат
         if (textareaRef.current) {
           textareaRef.current.scrollTop = 0;
+          textareaRef.current.focus();
         }
+        
+        const targetLabel = tabs.find(t => t.id === targetTabId)?.label;
+        alert(`Текст успешно обработан и сохранен во вкладке "${targetLabel}"! Нажмите "Сохранить", чтобы сохранить изменения.`);
       } else {
-        setSummaryError(result.error || 'Ошибка генерации конспекта');
+        setSummaryError(result.error || 'Ошибка обработки текста');
       }
     } catch (err) {
-      console.error('Ошибка генерации конспекта:', err);
-      setSummaryError('Не удалось подключиться к серверу конспектирования');
+      console.error('Ошибка улучшения текста:', err);
+      setSummaryError('Не удалось подключиться к серверу');
     } finally {
       setGeneratingSummary(false);
+    }
+  };
+
+  // Генерация всех вариантов из обычного конспекта
+  const generateAllVariants = async () => {
+    const sourceText = transcription;
+    
+    if (!sourceText.trim()) {
+      alert('Нет текста в обычном конспекте для обработки');
+      return;
+    }
+    
+    setGeneratingSummary(true);
+    setSummaryError('');
+    
+    const actions = [
+      { action: 'summary', tabId: 'summary', setter: setAiSummary, label: 'Краткий конспект' },
+      { action: 'bullet_points', tabId: 'bulletPoints', setter: setAiBulletPoints, label: 'Тезисы' },
+      { action: 'structure', tabId: 'structure', setter: setAiStructure, label: 'Структура' },
+      { action: 'questions', tabId: 'questions', setter: setAiQuestions, label: 'Вопросы' }
+    ];
+    
+    let successCount = 0;
+    
+    for (const item of actions) {
+      try {
+        const response = await fetch(`${API_URL}/api/enhance-transcription`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: sourceText,
+            action: item.action,
+            recordingId: recordingId
+          })
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          if (result.success && result.text) {
+            item.setter(result.text);
+            successCount++;
+          }
+        }
+      } catch (err) {
+        console.error(`Ошибка генерации ${item.label}:`, err);
+      }
+    }
+    
+    setChangesMade(true);
+    setGeneratingSummary(false);
+    
+    alert(`Сгенерировано ${successCount} из ${actions.length} вариантов конспекта. Не забудьте сохранить изменения.`);
+  };
+
+  const getActionName = (action) => {
+    const actions = {
+      'summary': 'Краткий конспект',
+      'bullet_points': 'Список тезисов',
+      'structure': 'Структуру',
+      'questions': 'Вопросы'
+    };
+    return actions[action] || action;
+  };
+
+  const getCurrentTextByTabId = (tabId) => {
+    switch(tabId) {
+      case 'transcription': return transcription;
+      case 'timed': return timedTranscription;
+      case 'summary': return aiSummary;
+      case 'bulletPoints': return aiBulletPoints;
+      case 'structure': return aiStructure;
+      case 'questions': return aiQuestions;
+      default: return '';
     }
   };
 
@@ -279,7 +523,7 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
         borderRadius: '8px',
         boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
       }}>
-        {/* Шапка модального окна */}
+        {/* Верхняя панель */}
         <div style={{
           padding: '20px',
           backgroundColor: '#343a40',
@@ -287,7 +531,9 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          flexShrink: 0
+          flexShrink: 0,
+          flexWrap: 'wrap',
+          gap: '10px'
         }}>
           <div>
             <h2 style={{ margin: 0, fontSize: '22px'}}>Редактор конспекта</h2>
@@ -296,9 +542,8 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
             </div>
           </div>
           
-          {/* Блок генерации конспекта */}
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            {/* Индикатор LM Studio */}
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Индикатор AI */}
             {lmStudioAvailable !== null && (
               <div style={{
                 display: 'flex',
@@ -314,17 +559,33 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
                   width: '8px',
                   height: '8px',
                   borderRadius: '50%',
-                  backgroundColor: 'white',
-                  animation: lmStudioAvailable ? 'none' : 'pulse 1.5s infinite'
+                  backgroundColor: 'white'
                 }}></span>
-                {lmStudioAvailable ? 'LM Studio' : 'LM Studio offline'}
+                {lmStudioAvailable ? 'AI доступен' : 'AI недоступен'}
               </div>
             )}
             
-            {/* Выбор типа конспекта */}
+            {/* Кнопка генерации всех вариантов */}
+            <button
+              onClick={generateAllVariants}
+              disabled={generatingSummary || !lmStudioAvailable || !transcription.trim()}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#17a2b8',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: (generatingSummary || !lmStudioAvailable || !transcription.trim()) ? 'not-allowed' : 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              Сгенерировать все варианты
+            </button>
+            
+            {/* Выбор действия AI */}
             <select
               value={summaryAction}
-              onChange={(e) => setSummaryAction(e.target.value)}
+              onChange={handleActionChange}
               disabled={generatingSummary || !lmStudioAvailable}
               style={{
                 padding: '8px',
@@ -336,49 +597,30 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
                 cursor: generatingSummary ? 'not-allowed' : 'pointer'
               }}
             >
-              <option value="summary">📝 Краткий конспект</option>
-              <option value="bullet_points">• Список тезисов</option>
-              <option value="structure">📊 Структура</option>
-              <option value="questions">❓ Вопросы</option>
+              <option value="summary">Краткий конспект</option>
+              <option value="bullet_points">Список тезисов</option>
+              <option value="structure">Структура</option>
+              <option value="questions">Вопросы</option>
             </select>
             
-            {/* Кнопка генерации */}
+            {/* Кнопка AI обработки */}
             <button
-              onClick={generateSummary}
-              disabled={generatingSummary || !lmStudioAvailable || !transcription.trim()}
+              onClick={enhanceText}
+              disabled={generatingSummary || !lmStudioAvailable || !getCurrentText().trim()}
               style={{
                 padding: '8px 16px',
                 backgroundColor: generatingSummary ? '#6c757d' : '#007bff',
                 color: 'white',
                 border: 'none',
                 borderRadius: '4px',
-                cursor: (generatingSummary || !lmStudioAvailable || !transcription.trim()) ? 'not-allowed' : 'pointer',
-                minWidth: '120px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px'
+                cursor: (generatingSummary || !lmStudioAvailable || !getCurrentText().trim()) ? 'not-allowed' : 'pointer',
+                minWidth: '200px'
               }}
             >
-              {generatingSummary ? (
-                <>
-                  <span style={{
-                    display: 'inline-block',
-                    width: '12px',
-                    height: '12px',
-                    border: '2px solid white',
-                    borderTopColor: 'transparent',
-                    borderRadius: '50%',
-                    animation: 'spin 1s linear infinite'
-                  }}></span>
-                  Генерация...
-                </>
-              ) : (
-                '✨ Создать конспект'
-              )}
+              {generatingSummary ? 'Обработка...' : `Создать ${getActionName(summaryAction)}`}
             </button>
             
-            {/* Кнопки аудио */}
+            {/* Кнопка аудио */}
             {recordingInfo?.filePath && (
               <button
                 onClick={playAudio}
@@ -392,10 +634,11 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
                   fontWeight: 'bold'
                 }}
               >
-                {isPlaying ? '⏸️ Пауза' : '▶️ Прослушать'}
+                {isPlaying ? 'Пауза' : 'Прослушать'}
               </button>
             )}
             
+            {/* Кнопки действий */}
             <button
               onClick={handleCancel}
               style={{
@@ -413,7 +656,7 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
             
             <button
               onClick={handleSave}
-              disabled={saving || (!changesMade && transcription === originalTranscription)}
+              disabled={saving || !changesMade}
               style={{
                 padding: '8px 20px',
                 backgroundColor: '#28a745',
@@ -421,31 +664,17 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
                 border: 'none',
                 borderRadius: '4px',
                 minWidth: '120px',
-                cursor: (saving || (!changesMade && transcription === originalTranscription)) ? 'not-allowed' : 'pointer',
+                cursor: (saving || !changesMade) ? 'not-allowed' : 'pointer',
                 fontWeight: 'bold'
               }}
             >
-              {saving ? (
-                <>
-                  <span style={{
-                    display: 'inline-block',
-                    width: '12px',
-                    height: '12px',
-                    marginRight: '8px',
-                    border: '2px solid white',
-                    borderTopColor: 'transparent',
-                    borderRadius: '50%',
-                    animation: 'spin 1s linear infinite'
-                  }}></span>
-                  Сохранение
-                </>
-              ) : '💾 Сохранить'}
+              {saving ? 'Сохранение...' : 'Сохранить'}
             </button>
           </div>
         </div>
         
-        {/* Ошибка генерации */}
-        {summaryError && (
+        {/* Ошибки */}
+        {(summaryError || error) && (
           <div style={{
             padding: '10px 20px',
             backgroundColor: '#f8d7da',
@@ -453,16 +682,17 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
             borderBottom: '1px solid #f5c6cb',
             fontSize: '14px'
           }}>
-            <strong>Ошибка:</strong> {summaryError}
+            <strong>Ошибка:</strong> {summaryError || error}
           </div>
         )}
         
+        {/* Основной контент */}
         <div style={{
           display: 'flex',
           flex: 1,
           minHeight: 0
         }}>
-          {/* Левая колонка - информация о записи */}
+          {/* Боковая панель */}
           <div style={{
             width: '250px',
             backgroundColor: '#f8f9fa',
@@ -483,40 +713,32 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
               </div>
             </div>
             
-            {recordingInfo?.description && (
-              <div style={{ marginBottom: '20px' }}>
-                <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '5px' }}>
-                  Описание
-                </div>
-                <div style={{ fontSize: '14px' }}>
-                  {recordingInfo.description}
-                </div>
-              </div>
-            )}
-            
             <div style={{ marginBottom: '20px' }}>
               <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '5px' }}>
-                Статистика
+                Статистика текущей вкладки
               </div>
               <div style={{ fontSize: '14px' }}>
                 <div>Слов: {wordCount}</div>
                 <div>Символов: {charCount}</div>
                 {recordingInfo?.duration && (
-                  <div>Длительность: {Math.floor(recordingInfo.duration / 60)}:{(recordingInfo.duration % 60).toString().padStart(2, '0')}</div>
+                  <div>Длительность: {Math.floor(recordingInfo.duration / 60)}:{String(recordingInfo.duration % 60).padStart(2, '0')}</div>
                 )}
               </div>
             </div>
             
-            {recordingInfo?.createdAt && (
-              <div style={{ marginBottom: '20px' }}>
-                <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '5px' }}>
-                  Создано
-                </div>
-                <div style={{ fontSize: '14px' }}>
-                  {new Date(recordingInfo.createdAt).toLocaleString()}
-                </div>
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '5px' }}>
+                Доступные конспекты
               </div>
-            )}
+              <div style={{ fontSize: '13px' }}>
+                <div>Обычный: {transcription ? 'есть' : 'нет'}</div>
+                <div>С таймингами: {timedTranscription ? 'есть' : 'нет'}</div>
+                <div>Краткий: {aiSummary ? 'есть' : 'нет'}</div>
+                <div>Тезисы: {aiBulletPoints ? 'есть' : 'нет'}</div>
+                <div>Структура: {aiStructure ? 'есть' : 'нет'}</div>
+                <div>Вопросы: {aiQuestions ? 'есть' : 'нет'}</div>
+              </div>
+            </div>
             
             {recordingInfo?.teacherName && (
               <div style={{ marginBottom: '20px' }}>
@@ -530,28 +752,58 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
             )}
           </div>
           
-          {/* Правая колонка - редактор */}
+          {/* Правая панель с редактором */}
           <div style={{
             flex: 1,
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden'
           }}>
-            {/* Счетчики над редактором */}
+            {/* Вкладки */}
             <div style={{
               padding: '10px 20px',
               backgroundColor: '#f8f9fa',
               borderBottom: '1px solid #dee2e6',
               display: 'flex',
-              justifyContent: 'space-between',
-              fontSize: '14px',
-              color: '#495057'
+              gap: '10px',
+              overflowX: 'auto'
             }}>
-              <span>Слов: <strong>{wordCount}</strong></span>
-              <span>Символов: <strong>{charCount}</strong></span>
+              {tabs.map(tab => {
+                const hasContent = getCurrentTextByTabId(tab.id);
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => {
+                      setActiveTab(tab.id);
+                      updateCounts(getCurrentTextByTabId(tab.id));
+                    }}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: activeTab === tab.id ? '#007bff' : '#e9ecef',
+                      color: activeTab === tab.id ? 'white' : '#495057',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontWeight: activeTab === tab.id ? 'bold' : 'normal',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    {tab.label}
+                    {hasContent && (
+                      <span style={{
+                        marginLeft: '8px',
+                        fontSize: '11px',
+                        opacity: 0.8
+                      }}>
+                        (есть текст)
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
             
-            {/* Текстовое поле */}
+            {/* Редактор текста */}
             <div style={{
               flex: 1,
               overflow: 'hidden',
@@ -559,8 +811,8 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
             }}>
               <textarea
                 ref={textareaRef}
-                value={transcription}
-                onChange={handleTranscriptionChange}
+                value={getCurrentText()}
+                onChange={handleTextChange}
                 style={{
                   width: '100%',
                   height: '100%',
@@ -571,14 +823,15 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
                   resize: 'none',
                   outline: 'none',
                   boxSizing: 'border-box',
-                  backgroundColor: '#fff'
+                  backgroundColor: '#fff',
+                  fontFamily: 'inherit'
                 }}
                 spellCheck="true"
                 placeholder="Введите или отредактируйте текст конспекта..."
                 autoFocus
               />
               
-              {transcription === '' && !loading && (
+              {!getCurrentText() && !loading && (
                 <div style={{
                   position: 'absolute',
                   top: '50%',
@@ -588,10 +841,9 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
                   color: '#adb5bd',
                   pointerEvents: 'none'
                 }}>
-                  <div style={{ fontSize: '48px', marginBottom: '10px' }}>📝</div>
-                  <p style={{ fontSize: '18px', margin: 0 }}>Текст конспекта отсутствует</p>
+                  <p style={{ fontSize: '18px', margin: 0 }}>Текст отсутствует</p>
                   <p style={{ fontSize: '14px', margin: '5px 0 0 0' }}>
-                    Начните печатать или нажмите "Создать конспект"
+                    Выберите действие в меню выше для генерации конспекта
                   </p>
                 </div>
               )}
@@ -612,15 +864,15 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
         }}>
           <div>
             {changesMade ? (
-              <span style={{ color: '#ffc107' }}>⚡ Есть несохраненные изменения</span>
+              <span style={{ color: '#ffc107' }}>Есть несохраненные изменения</span>
             ) : (
-              <span>✓ Все изменения сохранены</span>
+              <span>Все изменения сохранены</span>
             )}
           </div>
           <div>
             {generatingSummary && (
               <span style={{ color: '#007bff' }}>
-                ⏳ Генерация конспекта...
+                Обработка текста...
               </span>
             )}
           </div>
@@ -633,18 +885,8 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
           100% { transform: rotate(360deg); }
         }
         
-        @keyframes pulse {
-          0% { opacity: 1; }
-          50% { opacity: 0.4; }
-          100% { opacity: 1; }
-        }
-        
         textarea {
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
-        }
-        
-        textarea:focus {
-          background-color: #fff;
         }
         
         button {
@@ -654,18 +896,6 @@ const TranscriptionModal = ({ recordingId, onClose, onSave }) => {
         button:hover:not(:disabled) {
           opacity: 0.9;
           transform: translateY(-1px);
-        }
-        
-        button:active:not(:disabled) {
-          transform: translateY(0);
-        }
-        
-        select {
-          cursor: pointer;
-        }
-        
-        select:focus {
-          outline: none;
         }
         
         ::-webkit-scrollbar {

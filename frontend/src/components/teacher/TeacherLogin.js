@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import TeacherLoginView from './TeacherLoginView';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://192.168.0.17:3001';
+const API_BASE_URL = window.location.hostname.includes('tunnel4.com')
+  ? 'https://4d46289f-50f4-4151-9e9f-4860ddd78a36.tunnel4.com'
+  : 'https://10.121.104.190:3002';
+
+
 
 const TeacherLogin = ({ setTeacher, onBack }) => {
   const [name, setName] = useState('');
@@ -25,11 +29,17 @@ const TeacherLogin = ({ setTeacher, onBack }) => {
         body: JSON.stringify({ name, email })
       });
       
+      const data = await response.json();
+      
       if (!response.ok) {
-        throw new Error('Ошибка сервера');
+        if (response.status === 404) {
+          setError('Преподаватель с таким именем и email не найден');
+        } else {
+          setError(data.error || 'Ошибка сервера');
+        }
+        return;
       }
       
-      const data = await response.json();
       if (data.id) {
         setTeacher(data);
       }

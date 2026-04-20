@@ -1,4 +1,3 @@
-// ScheduleSessionModal.jsx
 import React, { useState } from 'react';
 import { createLocalDateTime } from '../../utils/dateUtils';
 

@@ -1,43 +1,47 @@
+
 import React, { useState, useEffect } from 'react';
 import StudentDashboardView from './StudentDashboardView';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://192.168.0.17:3001';
+const API_BASE_URL = window.location.hostname.includes('tunnel4.com')
+  ? 'https://4d46289f-50f4-4151-9e9f-4860ddd78a36.tunnel4.com'
+  : 'https://10.121.104.190:3002';
 
 const StudentDashboard = ({ student, onLogout, onEnterWebinar }) => {
   const [sessions, setSessions] = useState([]);
   const [selectedSession, setSelectedSession] = useState('');
-  const [currentSession, setCurrentSession] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [isJoined, setIsJoined] = useState(false);
   const [recordings, setRecordings] = useState([]);
   const [loadingRecordings, setLoadingRecordings] = useState(false);
+  const [missedSessions, setMissedSessions] = useState([]);
+  const [loadingMissed, setLoadingMissed] = useState(false);
+  const [summaryModalOpen, setSummaryModalOpen] = useState(false);
+  const [selectedRecordingForSummary, setSelectedRecordingForSummary] = useState(null);
+  const [selectedRecordingForPlayback, setSelectedRecordingForPlayback] = useState(null);
 
   const loadSessions = async () => {
     try {
+      setLoading(true);
       const response = await fetch(`${API_BASE_URL}/api/sessions/active`);
-      if (!response.ok) {
-        throw new Error('Ошибка загрузки сессий');
-      }
+      if (!response.ok) throw new Error('Ошибка загрузки сессий');
       const data = await response.json();
       setSessions(data);
     } catch (err) {
       console.error('Ошибка загрузки сессий:', err);
-      setError('Не удалось загрузить сессии');
+      setError('Ошибка загрузки сессий');
+    } finally {
+      setLoading(false);
     }
   };
 
   const loadRecordings = async () => {
-    if (!student?.id) return;
-    
-    setLoadingRecordings(true);
     try {
+      setLoadingRecordings(true);
       const response = await fetch(`${API_BASE_URL}/api/audio/student/${student.id}`);
-      if (!response.ok) {
-        throw new Error('Ошибка загрузки записей');
-      }
+      if (!response.ok) throw new Error('Ошибка загрузки записей');
       const data = await response.json();
-      setRecordings(Array.isArray(data) ? data : []);
+      setRecordings(data);
     } catch (err) {
       console.error('Ошибка загрузки записей:', err);
     } finally {
@@ -45,16 +49,28 @@ const StudentDashboard = ({ student, onLogout, onEnterWebinar }) => {
     }
   };
 
+  const loadMissedSessions = async () => {
+    try {
+      setLoadingMissed(true);
+      const response = await fetch(`${API_BASE_URL}/api/student/${student.id}/missed-sessions`);
+      if (!response.ok) throw new Error('Ошибка загрузки пропущенных занятий');
+      const data = await response.json();
+      setMissedSessions(data);
+    } catch (err) {
+      console.error('Ошибка загрузки пропущенных занятий:', err);
+    } finally {
+      setLoadingMissed(false);
+    }
+  };
+
   const handleJoinSession = async () => {
     if (!selectedSession) {
-      setError('Выберите сессию');
+      setError('Выберите вебинар');
       return;
     }
 
-    setError('');
-    setLoading(true);
-
     try {
+      setLoading(true);
       const response = await fetch(`${API_BASE_URL}/api/attendance/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -64,52 +80,52 @@ const StudentDashboard = ({ student, onLogout, onEnterWebinar }) => {
           sessionId: selectedSession
         })
       });
+
+      if (!response.ok) throw new Error('Ошибка присоединения');
       
-      if (!response.ok) {
-        throw new Error('Ошибка сервера');
-      }
-      
-      const data = await response.json();
-      if (data.success) {
-        const session = sessions.find(s => s.id === parseInt(selectedSession));
-        if (session) {
-          setCurrentSession(session);
-          setIsJoined(true);
-          onEnterWebinar(selectedSession);
-        }
-      }
+      setIsJoined(true);
+      onEnterWebinar(selectedSession);
     } catch (err) {
       console.error('Ошибка присоединения:', err);
-      setError('Не удалось присоединиться к сессии');
+      setError('Ошибка присоединения к вебинару');
     } finally {
       setLoading(false);
     }
   };
 
-  const formatTime = (seconds) => {
-    if (!seconds) return '00:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  const playRecording = (recording) => {
+    setSelectedRecordingForPlayback(recording);
   };
 
-  const playRecording = (filePath) => {
-    const audioUrl = `${API_BASE_URL}${filePath}`;
-    const audio = new Audio(audioUrl);
-    audio.play().catch(err => console.error('Ошибка воспроизведения:', err));
+  const handleClosePlayer = () => {
+    setSelectedRecordingForPlayback(null);
+  };
+
+  const downloadRecording = (filePath, title) => {
+    const downloadUrl = `${API_BASE_URL}${filePath}`;
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `${title || 'запись'}_${new Date().toISOString().slice(0, 19)}.webm`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const openSummaryModal = (recording) => {
+    setSelectedRecordingForSummary(recording);
+    setSummaryModalOpen(true);
+  };
+
+  const closeSummaryModal = () => {
+    setSummaryModalOpen(false);
+    setSelectedRecordingForSummary(null);
   };
 
   useEffect(() => {
     loadSessions();
-    const interval = setInterval(loadSessions, 15000);
-    return () => clearInterval(interval);
+    loadRecordings();
+    loadMissedSessions();
   }, []);
-
-  useEffect(() => {
-    if (student?.id) {
-      loadRecordings();
-    }
-  }, [student]);
 
   return (
     <StudentDashboardView
@@ -118,18 +134,26 @@ const StudentDashboard = ({ student, onLogout, onEnterWebinar }) => {
       onEnterWebinar={onEnterWebinar}
       sessions={sessions}
       selectedSession={selectedSession}
-      currentSession={currentSession}
       error={error}
       loading={loading}
       isJoined={isJoined}
       recordings={recordings}
       loadingRecordings={loadingRecordings}
-      formatTime={formatTime}
-      playRecording={playRecording}
+      missedSessions={missedSessions}
+      loadingMissed={loadingMissed}
+      downloadRecording={downloadRecording}
+      openSummaryModal={openSummaryModal}
+      closeSummaryModal={closeSummaryModal}
+      selectedRecordingForSummary={selectedRecordingForSummary}
+      summaryModalOpen={summaryModalOpen}
+      selectedRecordingForPlayback={selectedRecordingForPlayback}
+      handleClosePlayer={handleClosePlayer}
       setSelectedSession={setSelectedSession}
       setError={setError}
       handleJoinSession={handleJoinSession}
       loadSessions={loadSessions}
+      loadMissedSessions={loadMissedSessions}
+      playRecording={playRecording}
     />
   );
 };

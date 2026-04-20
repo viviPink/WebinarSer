@@ -1,4 +1,4 @@
-// SessionsCalendar.jsx
+
 import React, { useState } from 'react';
 import { 
   formatToLocalTime, 

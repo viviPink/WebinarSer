@@ -7,12 +7,10 @@ const RegistrationView = ({
   setName,
   email,
   setEmail,
-  mail,
-  setMail,
-  id,
-  setId,
   group,
   setGroup,
+  password,
+  setPassword,
   error,
   loading,
   handleRegister,
@@ -90,23 +88,13 @@ const RegistrationView = ({
           <>
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#333' }}>
-                ID:
+                ФИО:
               </label>
               <input
                 type="text"
-                value={id}
-                onChange={(e) => setId(e.target.value)}
-                style={{ width: '100%', padding: '12px', fontSize: '16px', boxSizing: 'border-box' }}
-              />
-            </div>
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#333' }}>
-                Mail:
-              </label>
-              <input
-                type="text"
-                value={mail}
-                onChange={(e) => setMail(e.target.value)}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Иванов Иван Иванович"
                 style={{ width: '100%', padding: '12px', fontSize: '16px', boxSizing: 'border-box' }}
               />
             </div>
@@ -118,6 +106,7 @@ const RegistrationView = ({
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                placeholder="teacher@university.ru"
                 style={{ width: '100%', padding: '12px', fontSize: '16px', boxSizing: 'border-box' }}
               />
             </div>
@@ -132,6 +121,7 @@ const RegistrationView = ({
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                placeholder="Иванов Иван Иванович"
                 style={{ width: '100%', padding: '12px', fontSize: '16px', boxSizing: 'border-box' }}
               />
             </div>
@@ -143,6 +133,19 @@ const RegistrationView = ({
                 type="text"
                 value={group}
                 onChange={(e) => setGroup(e.target.value)}
+                placeholder="ИС-21"
+                style={{ width: '100%', padding: '12px', fontSize: '16px', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#333' }}>
+                Пароль:
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Введите пароль"
                 style={{ width: '100%', padding: '12px', fontSize: '16px', boxSizing: 'border-box' }}
               />
             </div>

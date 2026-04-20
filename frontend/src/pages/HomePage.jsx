@@ -1,19 +1,13 @@
 import React from 'react';
 
-const AppView = ({ setUserRole, onRegister }) => {
-  const handleLogin = (role, e) => {
-    e.stopPropagation();
-    // Переход в основной интерфейс после входа
+const HomePage = ({ setUserRole, onRegister }) => {
+  const handleLogin = (role) => {
     setUserRole(role);
   };
 
-  const handleRegister = (role, e) => {
-    e.stopPropagation();
-    // Переход на регистрацию
+  const handleRegister = (role) => {
     if (onRegister) {
       onRegister(role);
-    } else {
-      alert(`Регистрация: ${role === 'teacher' ? 'Преподаватель' : 'Студент'}`);
     }
   };
 
@@ -27,47 +21,46 @@ const AppView = ({ setUserRole, onRegister }) => {
       <div className="content">
         <h1 className="heading">Выберите свою роль</h1>
         <p className="subheading">
-         Вебинары в офлайн формате
+          Вебинары в офлайн формате
         </p>
 
         <div className="cards">
+          {/* Карточка преподавателя */}
           <div className="card">
             <div className="card-icon"></div>
             <div className="decorative-circle circle-top"></div>
             <h3 className="card-title">Преподаватель</h3>
-            
-          
             <div className="buttons-container">
               <button 
                 className="btn btn-login"
-                onClick={(e) => handleLogin('teacher', e)}
+                onClick={() => handleLogin('teacher')}
               >
                 Вход
               </button>
               <button 
                 className="btn btn-register"
-                onClick={(e) => handleRegister('teacher', e)}
+                onClick={() => handleRegister('teacher')}
               >
                 Регистрация
               </button>
             </div>
           </div>
 
+          {/* Карточка студента */}
           <div className="card">
             <div className="card-icon"></div>
             <div className="decorative-circle circle-bottom"></div>
             <h3 className="card-title">Студент</h3>
-      
             <div className="buttons-container">
               <button 
                 className="btn btn-login"
-                onClick={(e) => handleLogin('student', e)}
+                onClick={() => handleLogin('student')}
               >
                 Вход
               </button>
               <button 
                 className="btn btn-register"
-                onClick={(e) => handleRegister('student', e)}
+                onClick={() => handleRegister('student')}
               >
                 Регистрация
               </button>
@@ -76,7 +69,7 @@ const AppView = ({ setUserRole, onRegister }) => {
         </div>
       </div>
 
-      <style jsx>{`
+      <style>{`
         .container {
           min-height: 100vh;
           background-color: #f0f5ff;
@@ -95,10 +88,6 @@ const AppView = ({ setUserRole, onRegister }) => {
           height: 48px;
           background-color: #7B61FF;
           border-radius: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 24px;
         }
         .title {
           font-size: 24px;
@@ -127,19 +116,18 @@ const AppView = ({ setUserRole, onRegister }) => {
           gap: 40px;
           justify-content: center;
           align-items: stretch;
-          flex-wrap: nowrap;
+          flex-wrap: wrap;
         }
         .card {
           background-color: #fff;
           border-radius: 24px;
           padding: 40px;
-          width: 480px;
-          min-height: 400px;
+          width: 400px;
+          min-height: 350px;
           box-shadow: 0 4px 12px rgba(0,0,0,0.08);
           text-align: left;
           position: relative;
           overflow: hidden;
-          flex-shrink: 0;
           display: flex;
           flex-direction: column;
         }
@@ -148,16 +136,12 @@ const AppView = ({ setUserRole, onRegister }) => {
           height: 64px;
           background-color: #7B61FF;
           border-radius: 16px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
           margin-bottom: 24px;
-          font-size: 32px;
         }
         .decorative-circle {
           position: absolute;
-          width: 260px;
-          height: 260px;
+          width: 200px;
+          height: 200px;
           background-color: #d1d5db;
           border-radius: 50%;
           opacity: 0.6;
@@ -174,14 +158,7 @@ const AppView = ({ setUserRole, onRegister }) => {
           font-size: 28px;
           font-weight: 700;
           color: #000;
-          margin: 0 0 16px 0;
-        }
-        .card-text {
-          font-size: 16px;
-          color: #6B7280;
-          line-height: 1.6;
           margin: 0 0 32px 0;
-          flex-grow: 1;
         }
         .buttons-container {
           display: flex;
@@ -215,21 +192,9 @@ const AppView = ({ setUserRole, onRegister }) => {
           background-color: #d1d5db;
           transform: translateY(-2px);
         }
-        .btn:active {
-          transform: translateY(0);
-        }
-        @media (max-width: 1100px) {
-          .cards {
-            flex-wrap: wrap;
-          }
-          .card {
-            width: 100%;
-            max-width: 520px;
-          }
-        }
       `}</style>
     </div>
   );
 };
 
-export default AppView;
+export default HomePage;

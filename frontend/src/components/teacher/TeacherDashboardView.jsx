@@ -1,9 +1,13 @@
-// TeacherDashboardView.jsx (обновлённый)
+
 import React, { useState } from 'react';
-import AttendanceReports from '../../components/common/AttendanceReports';
-import ScheduleSessionModal from '../../components/common/ScheduleSessionModal';
-import SessionsCalendar from './SessionsCalendar';
-import { formatToLocalDateTime, formatToLocalTime } from '../../utils/dateUtils';
+import ActiveWebinarsTab from './tabs/ActiveWebinarsTab';
+import CreateWebinarTab from './tabs/CreateWebinarTab';
+import GroupsSubjectsTab from './tabs/GroupsSubjectsTab';
+import CalendarTab from './tabs/CalendarTab';
+import ReportsTab from './tabs/ReportsTab';
+import RecordingsTab from './tabs/RecordingsTab';
+import ProfileTab from './tabs/ProfileTab';
+
 
 const TeacherDashboardView = ({
   teacher,
@@ -12,15 +16,22 @@ const TeacherDashboardView = ({
   courses,
   sessions,
   scheduledSessions,
+  teacherGroups,
+  recordings,
   newCourseTitle,
   setNewCourseTitle,
   selectedCourse,
   setSelectedCourse,
+  selectedGroup,
+  setSelectedGroup,
+  selectedSubject,
+  setSelectedSubject,
   sessionDescription,
   setSessionDescription,
   error,
-  setError,  
+  setError,
   loading,
+  recordingsLoading,
   handleCreateCourse,
   handleCreateSession,
   handleScheduleSession,
@@ -28,581 +39,283 @@ const TeacherDashboardView = ({
   handleDeleteScheduledSession,
   handleEditScheduledSession,
   loadSessions,
-  loadScheduledSessions
+  loadScheduledSessions,
+  loadCourses,
+  loadTeacherGroups,
+  loadRecordings,
+  onEditRecording,
+  onDeleteRecording,
+  onTranscribeRecording,
+  onEnhanceText,
+  onUpdateRecordingField
 }) => {
-  const [activeTab, setActiveTab] = useState('webinars');
-  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
-
-  // Стили для компонента
-  const styles = {
-    container: {
-      padding: '20px',
-      fontFamily: 'sans-serif',
-      backgroundColor: '#a1aebc',
-      minHeight: '100vh'
-    },
-    header: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: '30px',
-      padding: '20px',
-      backgroundColor: 'white',
-      borderRadius: '4px',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-    },
-    teacherInfo: {
-      color: '#050404',
-      margin: 0
-    },
-    logoutButton: {
-      padding: '8px 16px',
-      backgroundColor: '#100d0d',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontSize: '14px',
-      ':hover': {
-        backgroundColor: '#333'
-      }
-    },
-    tabsContainer: {
-      marginBottom: '20px',
-      display: 'flex',
-      gap: '10px',
-      backgroundColor: 'white',
-      padding: '10px',
-      borderRadius: '4px',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-    },
-    tabButton: (isActive) => ({
-      padding: '10px 20px',
-      border: 'none',
-      background: isActive ? '#333' : '#f0f0f0',
-      color: isActive ? 'white' : '#333',
-      cursor: 'pointer',
-      borderRadius: '4px',
-      flex: 1,
-      fontSize: '16px',
-      transition: 'all 0.3s',
-      ':hover': {
-        background: isActive ? '#444' : '#e0e0e0'
-      }
-    }),
-    section: {
-      marginBottom: '30px',
-      padding: '25px',
-      backgroundColor: 'white',
-      borderRadius: '4px',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-    },
-    sectionTitle: {
-      color: '#333',
-      marginBottom: '20px',
-      fontSize: '20px',
-      fontWeight: 'bold'
-    },
-    inputGroup: {
-      display: 'flex',
-      gap: '10px',
-      marginBottom: '15px'
-    },
-    input: {
-      flex: 1,
-      padding: '12px',
-      fontSize: '16px',
-      border: '1px solid #ddd',
-      borderRadius: '4px',
-      ':focus': {
-        outline: 'none',
-        borderColor: '#007bff'
-      }
-    },
-    textarea: {
-      padding: '12px',
-      width: '100%',
-      maxWidth: '500px',
-      fontSize: '16px',
-      backgroundColor: 'white',
-      border: '1px solid #ddd',
-      borderRadius: '4px',
-      minHeight: '100px',
-      resize: 'vertical',
-      ':focus': {
-        outline: 'none',
-        borderColor: '#007bff'
-      }
-    },
-    select: {
-      padding: '12px',
-      width: '100%',
-      maxWidth: '500px',
-      fontSize: '16px',
-      backgroundColor: 'white',
-      border: '1px solid #ddd',
-      borderRadius: '4px',
-      ':focus': {
-        outline: 'none',
-        borderColor: '#007bff'
-      }
-    },
-    button: (color = '#0a0909', disabled = false) => ({
-      padding: '12px 24px',
-      backgroundColor: color,
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      fontSize: '16px',
-      cursor: disabled ? 'not-allowed' : 'pointer',
-      opacity: disabled ? 0.5 : 1,
-      transition: 'all 0.3s',
-      ':hover': disabled ? {} : {
-        opacity: 0.9,
-        transform: 'translateY(-1px)',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-      }
-    }),
-    buttonGroup: {
-      display: 'flex',
-      gap: '10px'
-    },
-    coursesGrid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-      gap: '20px'
-    },
-    courseCard: {
-      padding: '20px',
-      backgroundColor: 'white',
-      borderRadius: '4px',
-      border: '1px solid #eee',
-      transition: 'all 0.3s',
-      ':hover': {
-        boxShadow: '0 4px 8px rgba(0,0,0,0.1)'
-      }
-    },
-    courseTitle: {
-      margin: '0 0 15px 0',
-      color: '#333',
-      fontSize: '18px'
-    },
-    courseButton: (isSelected) => ({
-      width: '100%',
-      padding: '10px',
-      backgroundColor: isSelected ? '#28a745' : '#080809',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontSize: '14px',
-      marginBottom: '10px',
-      transition: 'all 0.3s',
-      ':hover': {
-        opacity: 0.9
-      }
-    }),
-    courseId: {
-      fontSize: '12px',
-      color: '#666',
-      textAlign: 'center'
-    },
-    sessionsList: {
-      display: 'grid',
-      gap: '20px'
-    },
-    sessionCard: {
-      padding: '25px',
-      backgroundColor: 'white',
-      borderRadius: '4px',
-      border: '1px solid #eee',
-      transition: 'all 0.3s',
-      ':hover': {
-        boxShadow: '0 4px 8px rgba(0,0,0,0.1)'
-      }
-    },
-    sessionHeader: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start'
-    },
-    sessionInfo: {
-      flex: 1
-    },
-    sessionMainTitle: {
-      margin: '0 0 15px 0',
-      color: '#333',
-      fontSize: '20px'
-    },
-    sessionDescription: {
-      marginBottom: '15px',
-      padding: '10px',
-      backgroundColor: '#f5f5f5',
-      borderRadius: '4px',
-      fontSize: '14px',
-      color: '#555'
-    },
-    sessionDetails: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(3, 1fr)',
-      gap: '15px',
-      marginBottom: '20px'
-    },
-    detailLabel: {
-      fontSize: '12px',
-      color: '#666',
-      marginBottom: '4px'
-    },
-    detailValue: {
-      fontWeight: 'bold',
-      fontSize: '16px',
-      color: '#333'
-    },
-    statusActive: {
-      color: '#28a745',
-      fontWeight: 'bold'
-    },
-    actionButtons: {
-      display: 'flex',
-      gap: '10px',
-      flexDirection: 'column',
-      minWidth: '150px'
-    },
-    enterButton: {
-      padding: '10px 16px',
-      backgroundColor: '#060e08',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontSize: '14px',
-    },
-    finishButton: {
-      padding: '10px 16px',
-      backgroundColor: '#0c0909',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontSize: '14px',
-    },
-    emptyState: {
-      padding: '40px',
-      textAlign: 'center',
-      backgroundColor: 'white',
-      borderRadius: '4px',
-      color: '#666'
-    },
-    statsGrid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-      gap: '20px'
-    },
-    statItem: {
-      textAlign: 'center'
-    },
-    statLabel: {
-      fontSize: '14px',
-      color: '#666'
-    },
-    statValue: {
-      fontSize: '24px',
-      fontWeight: 'bold',
-      color: '#333'
-    },
-    errorMessage: {
-      marginTop: '20px',
-      padding: '15px',
-      backgroundColor: '#f8d7da',
-      color: '#721c24',
-      border: '1px solid #f5c6cb',
-      borderRadius: '4px',
-      textAlign: 'center'
-    },
-    calendarHeader: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: '20px'
-    },
-    refreshButton: {
-      padding: '8px 16px',
-      backgroundColor: '#030303',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      ':hover': {
-        backgroundColor: '#333'
-      }
-    }
-  };
+  const [activeTab, setActiveTab] = useState('active');
 
   return (
-    <div style={styles.container}>
-      {/* Шапка */}
-      <div style={styles.header}>
+    <div className="dashboard-container">
+      <style jsx>{`
+        .dashboard-container {
+          min-height: 100vh;
+          background-color: #fff;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          padding: 0;
+        }
+
+        .header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 20px 40px;
+          background-color: #fff;
+          border-bottom: 1px solid #e5e7eb;
+        }
+
+        .logo-section {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .title {
+          font-size: 24px;
+          font-weight: 700;
+          color: #000;
+        }
+
+        .teacher-info {
+          color: #6B7280;
+          font-size: 14px;
+          margin: 0;
+        }
+
+        .teacher-info strong {
+          color: #111827;
+        }
+
+        .back-button {
+          background: none;
+          border: none;
+          font-size: 16px;
+          color: #6B7280;
+          cursor: pointer;
+          padding: 8px 16px;
+          transition: all 0.2s;
+          border-radius: 12px;
+        }
+
+        .back-button:hover {
+          color: #7B61FF;
+          background-color: #f3f4f6;
+        }
+
+        .tabs-container {
+          margin: 24px 40px 0 40px;
+          display: flex;
+          gap: 8px;
+          background-color: #fff;
+          padding: 8px;
+          border-radius: 16px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+          border: 1px solid #e5e7eb;
+        }
+
+        .tab-button {
+          flex: 1;
+          padding: 12px 20px;
+          border: none;
+          background: transparent;
+          font-size: 16px;
+          font-weight: 500;
+          border-radius: 12px;
+          cursor: pointer;
+          transition: all 0.2s;
+          color: #6B7280;
+        }
+
+        .tab-button.active {
+          background-color: #7B61FF;
+          color: white;
+        }
+
+        .tab-button:not(.active):hover {
+          background-color: #f3f4f6;
+          color: #111827;
+        }
+
+        .main-content {
+          padding: 0 40px 40px 40px;
+        }
+
+        @media (max-width: 768px) {
+          .header {
+            padding: 16px 20px;
+            flex-direction: column;
+            gap: 12px;
+            text-align: center;
+          }
+          .tabs-container {
+            margin: 16px 20px 0 20px;
+            flex-wrap: wrap;
+          }
+          .tab-button {
+            flex: 1;
+            min-width: 100px;
+            padding: 10px 12px;
+            font-size: 14px;
+          }
+          .main-content {
+            padding: 0 20px 20px 20px;
+          }
+        }
+      `}</style>
+
+      <div className="header">
+        <div className="logo-section">
+          <span className="title">ВебРум</span>
+        </div>
         <div>
-          <p style={styles.teacherInfo}>
+          <p className="teacher-info">
             <strong>{teacher?.name || 'Преподаватель'}</strong> (ID: {teacher?.id})
           </p>
         </div>
-        <button onClick={onLogout} style={styles.logoutButton}>
+        <button onClick={onLogout} className="back-button">
           Выйти
         </button>
       </div>
 
-      {/* Вкладки */}
-      <div style={styles.tabsContainer}>
+      <div className="tabs-container">
         <button
-          onClick={() => setActiveTab('webinars')}
-          style={styles.tabButton(activeTab === 'webinars')}
+          onClick={() => setActiveTab('active')}
+          className={`tab-button ${activeTab === 'active' ? 'active' : ''}`}
         >
-          Вебинары
+          Активные вебинары
+        </button>
+        <button
+          onClick={() => setActiveTab('create')}
+          className={`tab-button ${activeTab === 'create' ? 'active' : ''}`}
+        >
+          Создание вебинара
+        </button>
+        <button
+          onClick={() => setActiveTab('groups')}
+          className={`tab-button ${activeTab === 'groups' ? 'active' : ''}`}
+        >
+          Группы и предметы
         </button>
         <button
           onClick={() => setActiveTab('calendar')}
-          style={styles.tabButton(activeTab === 'calendar')}
+          className={`tab-button ${activeTab === 'calendar' ? 'active' : ''}`}
         >
           Календарь
         </button>
         <button
           onClick={() => setActiveTab('reports')}
-          style={styles.tabButton(activeTab === 'reports')}
+          className={`tab-button ${activeTab === 'reports' ? 'active' : ''}`}
         >
           Отчёты
         </button>
+        <button
+          onClick={() => setActiveTab('recordings')}
+          className={`tab-button ${activeTab === 'recordings' ? 'active' : ''}`}
+        >
+          Записи лекций
+        </button>
+        <button
+          onClick={() => setActiveTab('profile')}
+          className={`tab-button ${activeTab === 'profile' ? 'active' : ''}`}
+        >
+          Личная информация
+        </button>
       </div>
 
-      {/* Контент вкладок */}
-      {activeTab === 'webinars' && (
-        /* Вкладка Вебинары */
-        <div>
-          {/* Создание курса */}
-          <div style={styles.section}>
-            <h3 style={styles.sectionTitle}>Создать новый курс</h3>
-            <div style={styles.inputGroup}>
-              <input
-                placeholder="Название курса"
-                value={newCourseTitle}
-                onChange={(e) => setNewCourseTitle(e.target.value)}
-                style={styles.input}
-              />
-              <button 
-                onClick={handleCreateCourse}
-                disabled={!newCourseTitle.trim() || loading}
-                style={styles.button('#0a0909', !newCourseTitle.trim() || loading)}
-              >
-                Создать курс
-              </button>
-            </div>
-          </div>
+      <div className="main-content">
+        {activeTab === 'active' && (
+          <ActiveWebinarsTab
+            sessions={sessions}
+            onEnterWebinar={onEnterWebinar}
+            onFinishSession={handleFinishSession}
+            loadSessions={loadSessions}
+            loading={loading}
+          />
+        )}
 
-          {/* Мои курсы */}
-          <div style={styles.section}>
-            <h3 style={styles.sectionTitle}>Мои курсы ({courses.length})</h3>
-            
-            {courses.length === 0 ? (
-              <div style={styles.emptyState}>
-                <p>У вас пока нет курсов</p>
-              </div>
-            ) : (
-              <div style={styles.coursesGrid}>
-                {courses.map(course => (
-                  <div key={course.id} style={styles.courseCard}>
-                    <h4 style={styles.courseTitle}>{course.title}</h4>
-                    <button 
-                      onClick={() => setSelectedCourse(course.id)}
-                      style={styles.courseButton(selectedCourse === course.id)}
-                    >
-                      {selectedCourse === course.id ? 'Выбран' : 'Выбрать для сессии'}
-                    </button>
-                    <div style={styles.courseId}>
-                      ID: {course.id}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        {activeTab === 'create' && (
+          <CreateWebinarTab
+            teacher={teacher}
+            courses={courses}
+            teacherGroups={teacherGroups}
+            newCourseTitle={newCourseTitle}
+            setNewCourseTitle={setNewCourseTitle}
+            selectedCourse={selectedCourse}
+            setSelectedCourse={setSelectedCourse}
+            selectedGroup={selectedGroup}
+            setSelectedGroup={setSelectedGroup}
+            selectedSubject={selectedSubject}
+            setSelectedSubject={setSelectedSubject}
+            sessionDescription={sessionDescription}
+            setSessionDescription={setSessionDescription}
+            error={error}
+            setError={setError}
+            loading={loading}
+            handleCreateCourse={handleCreateCourse}
+            handleCreateSession={handleCreateSession}
+            handleScheduleSession={handleScheduleSession}
+            loadCourses={loadCourses}
+          />
+        )}
 
-          {/* Создание сессии */}
-          <div style={styles.section}>
-            <h3 style={styles.sectionTitle}>Создать сессию вебинара</h3>
-            
-            <div style={{ marginBottom: '15px' }}>
-              <select
-                value={selectedCourse}
-                onChange={(e) => {
-                  setSelectedCourse(e.target.value);
-                  setError('');
-                }}
-                style={styles.select}
-              >
-                <option value="">— Выберите курс для вебинара —</option>
-                {courses.map(course => (
-                  <option key={course.id} value={course.id}>{course.title}</option>
-                ))}
-              </select>
-            </div>
-            
-            {/* Поле для описания сессии */}
-            <div style={{ marginBottom: '15px' }}>
-              <textarea
-                placeholder="Описание сессии (необязательно)"
-                value={sessionDescription}
-                onChange={(e) => setSessionDescription(e.target.value)}
-                style={styles.textarea}
-              />
-            </div>
+        {activeTab === 'groups' && (
+          <GroupsSubjectsTab
+            teacher={teacher}
+            onUpdate={loadTeacherGroups}
+          />
+        )}
 
-            <div style={styles.buttonGroup}>
-              <button 
-                onClick={handleCreateSession}
-                disabled={!selectedCourse || loading}
-                style={styles.button('#0a0909', !selectedCourse || loading)}
-              >
-                {loading ? 'Создание...' : 'Начать сейчас'}
-              </button>
-              
-              <button 
-                onClick={() => setIsScheduleModalOpen(true)}
-                disabled={courses.length === 0}
-                style={styles.button('#007bff', courses.length === 0)}
-              >
-                Запланировать
-              </button>
-            </div>
-          </div>
-
-          {/* Активные сессии */}
-          <div style={styles.section}>
-            <div style={styles.calendarHeader}>
-              <h3 style={styles.sectionTitle}>Активные сессии ({sessions.length})</h3>
-              <button onClick={loadSessions} style={styles.refreshButton}>
-                Обновить
-              </button>
-            </div>
-            
-            {sessions.length === 0 ? (
-              <div style={styles.emptyState}>
-                <p>Нет активных сессий</p>
-              </div>
-            ) : (
-              <div style={styles.sessionsList}>
-                {sessions.map(session => (
-                  <div key={session.id} style={styles.sessionCard}>
-                    <div style={styles.sessionHeader}>
-                      <div style={styles.sessionInfo}>
-                        <h4 style={styles.sessionMainTitle}>
-                          {session.courseTitle}
-                        </h4>
-                        
-                        {/* Отображение описания сессии, если оно есть */}
-                        {session.description && (
-                          <div style={styles.sessionDescription}>
-                            <strong>Описание:</strong> {session.description}
-                          </div>
-                        )}
-                        
-                        <div style={styles.sessionDetails}>
-                          <div>
-                            <div style={styles.detailLabel}>ID сессии:</div>
-                            <div style={styles.detailValue}>{session.id}</div>
-                          </div>
-                          <div>
-                            <div style={styles.detailLabel}>Начало:</div>
-                            <div style={styles.detailValue}>
-                              {formatToLocalDateTime(session.startTime)}
-                            </div>
-                          </div>
-                          <div>
-                            <div style={styles.detailLabel}>Статус:</div>
-                            <div style={styles.statusActive}>Активна</div>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div style={styles.actionButtons}>
-                        <button 
-                          onClick={() => onEnterWebinar(session.id)}
-                          style={styles.enterButton}
-                        >
-                          Войти в вебинар
-                        </button>
-                        <button 
-                          onClick={() => handleFinishSession(session.id)}
-                          style={styles.finishButton}
-                        >
-                          Завершить
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Статистика */}
-          <div style={styles.section}>
-            <h3 style={styles.sectionTitle}>Статистика</h3>
-            <div style={styles.statsGrid}>
-              <div style={styles.statItem}>
-                <div style={styles.statLabel}>Всего курсов</div>
-                <div style={styles.statValue}>{courses.length}</div>
-              </div>
-              <div style={styles.statItem}>
-                <div style={styles.statLabel}>Активных сессий</div>
-                <div style={styles.statValue}>{sessions.length}</div>
-              </div>
-              <div style={styles.statItem}>
-                <div style={styles.statLabel}>Запланировано</div>
-                <div style={styles.statValue}>{scheduledSessions?.length || 0}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'calendar' && (
-        /* Вкладка Календарь */
-        <div style={styles.section}>
-          <div style={styles.calendarHeader}>
-            <h3 style={styles.sectionTitle}>Расписание вебинаров</h3>
-            <button onClick={loadScheduledSessions} style={styles.refreshButton}>
-              Обновить
-            </button>
-          </div>
-          
-          <SessionsCalendar
+        {activeTab === 'calendar' && (
+          <CalendarTab
             sessions={sessions}
             scheduledSessions={scheduledSessions}
             onEditSession={handleEditScheduledSession}
             onDeleteSession={handleDeleteScheduledSession}
             onStartSession={onEnterWebinar}
+            loadScheduledSessions={loadScheduledSessions}
           />
-        </div>
-      )}
+        )}
 
-      {activeTab === 'reports' && (
-        /* Вкладка Отчёты */
-        <div style={styles.section}>
-          <AttendanceReports teacher={teacher} />
-        </div>
-      )}
+        {activeTab === 'reports' && (
+          <ReportsTab teacher={teacher} />
+        )}
 
-      {/* Модальное окно планирования */}
-      <ScheduleSessionModal
-        isOpen={isScheduleModalOpen}
-        onClose={() => setIsScheduleModalOpen(false)}
-        courses={courses}
-        onSchedule={handleScheduleSession}
-      />
+        {activeTab === 'recordings' && (
+          <RecordingsTab
+            recordings={recordings}
+            loading={recordingsLoading}
+            onLoad={loadRecordings}
+            onEdit={onEditRecording}
+            onDelete={onDeleteRecording}
+            onTranscribe={onTranscribeRecording}
+            onEnhanceText={onEnhanceText}
+            onUpdateField={onUpdateRecordingField}
+          />
+        )}
 
-      {/* Ошибки */}
+        {activeTab === 'profile' && (
+          <ProfileTab teacher={teacher} />
+        )}
+      </div>
+
       {error && (
-        <div style={styles.errorMessage}>
+        <div style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '20px',
+          padding: '12px 20px',
+          backgroundColor: '#FEE2E2',
+          color: '#DC2626',
+          borderRadius: '12px',
+          fontSize: '14px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+        }}>
           {error}
         </div>
       )}
